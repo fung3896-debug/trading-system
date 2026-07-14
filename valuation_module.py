@@ -18,13 +18,13 @@ Plan B 估值模組 (valuation_module.py)
     pip install yfinance pandas --break-system-packages
 """
 
-import yfinance as yf
 import pandas as pd
 import time
 import random
 import json
 import os
 from datetime import datetime, timedelta
+from yahoo_fetch import fetch_quote_summary, fetch_fundamentals_timeseries, latest_timeseries_value
 
 # ------------------------------------------------------------------
 # 設定區
@@ -123,26 +123,25 @@ def fetch_financials(ticker):
         print(f"  [快取] {ticker} 使用本地數據 (7天內)")
         return cached
 
-    print(f"  [抓取] {ticker} 從 yfinance 下載中...")
+    print(f"  [抓取] {ticker} 從 Yahoo Finance 下載中...")
     try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        cashflow = stock.cashflow
-        income = stock.financials
+        qs = fetch_quote_summary(ticker, "price,defaultKeyStatistics")
+        price = (qs.get("price", {}).get("regularMarketPrice", {}) or {}).get("raw")
+        eps = (qs.get("defaultKeyStatistics", {}).get("trailingEps", {}) or {}).get("raw")
+        shares_out = (qs.get("defaultKeyStatistics", {}).get("sharesOutstanding", {}) or {}).get("raw")
 
-        price = info.get("currentPrice") or info.get("previousClose")
-        eps = info.get("trailingEps")
-        shares_out = info.get("sharesOutstanding")
-
-        # Owner Earnings 所需項目 (取最近一年)
-        net_income = _safe_row(income, ["Net Income", "Net Income Common Stockholders"])
-        dep_amort = _safe_row(cashflow, ["Depreciation And Amortization", "Depreciation"])
-        capex = _safe_row(cashflow, ["Capital Expenditure", "Capital Expenditures"])
+        # Owner Earnings 所需項目 (取最近一年年度數據)
+        types = ["annualNetIncome", "annualDepreciationAndAmortization",
+                 "annualCapitalExpenditure", "annualFreeCashFlow", "annualOperatingCashFlow"]
+        ts = fetch_fundamentals_timeseries(ticker, types)
+        net_income = latest_timeseries_value(ts, "annualNetIncome")
+        dep_amort = latest_timeseries_value(ts, "annualDepreciationAndAmortization")
+        capex = latest_timeseries_value(ts, "annualCapitalExpenditure")
 
         # 歷史自由現金流 (FCF) 用於估算增長率
-        fcf_row = _safe_row(cashflow, ["Free Cash Flow"])
+        fcf_row = latest_timeseries_value(ts, "annualFreeCashFlow")
         if fcf_row is None:
-            op_cf = _safe_row(cashflow, ["Operating Cash Flow", "Total Cash From Operating Activities"])
+            op_cf = latest_timeseries_value(ts, "annualOperatingCashFlow")
             if op_cf is not None and capex is not None:
                 fcf_row = op_cf + capex  # capex 通常是負值
             else:
@@ -172,18 +171,6 @@ def fetch_financials(ticker):
     except Exception as e:
         print(f"  [錯誤] {ticker} 抓取失敗: {e}")
         return None
-
-
-def _safe_row(df, possible_names):
-    """從 DataFrame 中安全取出最近一期數值"""
-    if df is None or df.empty:
-        return None
-    for name in possible_names:
-        if name in df.index:
-            val = df.loc[name].iloc[0]
-            if pd.notna(val):
-                return float(val)
-    return None
 
 
 # ------------------------------------------------------------------

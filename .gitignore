@@ -3,6 +3,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# Valuation module runtime cache (regenerated, not source)
+valuation_cache/
+valuation_results.csv
+
 # C extensions
 *.so
 

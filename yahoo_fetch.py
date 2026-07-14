@@ -16,6 +16,72 @@ import pandas as pd
 
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
 _CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+_QUOTE_SUMMARY_URL = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
+_TIMESERIES_URL = "https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/{ticker}"
+
+_session = None
+_crumb = None
+
+
+def _get_session():
+    """Yahoo 的 quoteSummary/timeseries 端点需要 cookie+crumb 认证,
+    整个进程只握手一次,后续请求复用同一个 session"""
+    global _session, _crumb
+    if _session is None:
+        s = requests.Session()
+        s.headers.update(_HEADERS)
+        s.get("https://fc.yahoo.com", timeout=15)
+        _crumb = s.get("https://query2.finance.yahoo.com/v1/test/getcrumb", timeout=15).text
+        _session = s
+    return _session, _crumb
+
+
+def fetch_quote_summary(ticker: str, modules: str, retries: int = 3) -> dict:
+    """获取 quoteSummary (价格/EPS/流通股数等静态字段)"""
+    last_err = None
+    for attempt in range(retries):
+        try:
+            s, crumb = _get_session()
+            r = s.get(_QUOTE_SUMMARY_URL.format(ticker=ticker),
+                       params={"modules": modules, "crumb": crumb}, timeout=15)
+            r.raise_for_status()
+            result = r.json().get("quoteSummary", {}).get("result")
+            return result[0] if result else {}
+        except Exception as e:
+            last_err = e
+            time.sleep(1.5 * (attempt + 1))
+    print(f"  [警告] {ticker} quoteSummary 获取失败: {last_err}")
+    return {}
+
+
+def fetch_fundamentals_timeseries(ticker: str, types: list, years: int = 6, retries: int = 3) -> list:
+    """获取年度财务时间序列 (净利/折旧摊销/资本支出/自由现金流等)"""
+    last_err = None
+    for attempt in range(retries):
+        try:
+            s, crumb = _get_session()
+            now = int(time.time())
+            r = s.get(_TIMESERIES_URL.format(ticker=ticker),
+                       params={"type": ",".join(types), "period1": now - years * 365 * 86400,
+                               "period2": now, "crumb": crumb}, timeout=15)
+            r.raise_for_status()
+            return r.json().get("timeseries", {}).get("result") or []
+        except Exception as e:
+            last_err = e
+            time.sleep(1.5 * (attempt + 1))
+    print(f"  [警告] {ticker} fundamentals-timeseries 获取失败: {last_err}")
+    return []
+
+
+def latest_timeseries_value(ts_results: list, type_name: str):
+    """从 fetch_fundamentals_timeseries 的结果里取某个字段最新一期的数值"""
+    for block in ts_results:
+        if type_name in block.get("meta", {}).get("type", []):
+            entries = [x for x in block.get(type_name, []) if x]
+            if not entries:
+                return None
+            return entries[-1].get("reportedValue", {}).get("raw")
+    return None
 
 
 def fetch_ohlcv(ticker: str, range_: str = "10y", interval: str = "1d", retries: int = 3) -> pd.DataFrame:
