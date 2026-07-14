@@ -27,20 +27,77 @@ Fernando Smart Money Radar | 真实数据 + MCDX (完整对齐 Pine V7 Pro Recov
 import warnings
 warnings.filterwarnings('ignore')
 
-import yfinance as yf
+import time
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from yahoo_fetch import fetch_ohlcv
 
 # =====================================================
 # 0. Watchlist
 # =====================================================
 WATCHLIST = {
     'NASDAQ': ['NVDA', 'JBL', 'BX', 'AMD', 'META', 'MSFT', 'INTC', 'AMZN', 'ARM', 'NVCT'],
-    'KLSE': ['7233.KL', '5211.KL', '8907.KL', '6459.KL', '5249.KL', '5026.KL', '5286.KL', '0225.KL', '0099.KL',
-             '5031.KL', '5681.KL', '7163.KL', '8869.KL', '1066.KL', '0215.KL', '0326.KL',
-             '7103.KL', '5263.KL', '4863.KL', '5243.KL', '5142.KL'],
+    'KLSE': [
+        '9393.KL',  # ITRONIC
+        '0029.KL',  # DIGISTA
+        '7181.KL',  # ARBB
+        '0143.KL',  # KEYASIC
+        '0200.KL',  # REVENUE
+        '4359.KL',  # TURIYA
+        '8338.KL',  # DATAPRP
+        '0041.KL',  # AIMAX
+        '0113.KL',  # MMSV
+        '9075.KL',  # THETA
+        '5036.KL',  # EDARAN
+        '5011.KL',  # MSNIAGA
+        '0126.KL',  # MICROLN
+        '0051.KL',  # CUSCAPI
+        '0065.KL',  # EFORCE
+        '5195.KL',  # CENSOF
+        '0258.KL',  # AGMO
+        '9377.KL',  # FSBM
+        '0253.KL',  # INFOTEC
+        '0040.KL',  # OPENSYS
+        '0008.KL',  # WILLOW
+        '0090.KL',  # ELSOFT
+        '9008.KL',  # OMESTI
+        '9334.KL',  # KESM
+        '7022.KL',  # GTRONIC
+        '0249.KL',  # LGMS
+        '5028.KL',  # HTPADU
+        '0277.KL',  # CLOUDPT
+        '0127.KL',  # JHM
+        '5204.KL',  # AWANTEC
+        '0104.KL',  # GENETEC
+        '0083.KL',  # NOTION
+        '0246.KL',  # CNERGEN
+        '0276.KL',  # ADB
+        '7204.KL',  # D&O
+        '0146.KL',  # JFTECH
+        '5161.KL',  # JCY
+        '0259.KL',  # SNS
+        '5216.KL',  # NEXG
+        '4456.KL',  # DNEX
+        '5301.KL',  # CTOS
+        '5162.KL',  # VSTECS
+        '7160.KL',  # PENTA
+        '5286.KL',  # MI
+        '5309.KL',  # ITMAX
+        '5357.KL',  # SKYECHIP
+        '0208.KL',  # GREATEC
+        '0138.KL',  # ZETRIX
+        '5292.KL',  # UWC
+        '5005.KL',  # UNISEM
+        '0166.KL',  # INARI
+        '0128.KL',  # FRONTKN
+        '3867.KL',  # MPI
+        '0097.KL',  # VITROX
+    ],
 }
+
+BATCH_SIZE = 10
+BATCH_PAUSE_SEC = 2
 
 # =====================================================
 # 1. 参数 (对齐 Pine V7 Pro Recovery 默认值)
@@ -264,19 +321,15 @@ def detect_bearish_divergence(df: pd.DataFrame, lookback: int = DIVERGENCE_LOOKB
 # =====================================================
 def analyze_stock(ticker: str):
     try:
-        df = yf.download(ticker, period='7y', progress=False)
+        df = fetch_ohlcv(ticker, range_='10y', interval='1d')
         if df.empty or len(df) < 60:
             return None, "数据不足"
 
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
         df = df.dropna(subset=['Close'])
         if df.empty or len(df) < 60:
             return None, "数据不足"
 
         close = df['Close']
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
 
         ma20 = close.rolling(MA20_LEN).mean()
         ma50 = close.rolling(MA50_LEN).mean()
@@ -348,27 +401,33 @@ def analyze_stock(ticker: str):
 # 7. 扫描 + 报告
 # =====================================================
 def scan_market(market_name: str, emoji: str, tickers: list):
+    n_batches = (len(tickers) - 1) // BATCH_SIZE + 1
     print(f"\n{'='*110}")
-    print(f"{emoji} {market_name}  |  时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"{emoji} {market_name}  |  时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  分{n_batches}批, 每批{BATCH_SIZE}支")
     print(f"{'='*110}")
     print(f"{'代码':<10} {'价格':>10} {'总分':>7} {'信号':<8} {'MCDX共振':<12} {'风险':<14} {'D/W/M分':<18} {'RSI':>6}")
     print("-" * 110)
 
     results = []
-    for ticker in tickers:
-        result, err = analyze_stock(ticker)
-        if result is None:
-            print(f"{ticker:<10} ❌ {err}")
-            continue
-        results.append(result)
+    batches = [tickers[i:i + BATCH_SIZE] for i in range(0, len(tickers), BATCH_SIZE)]
+    for bi, batch in enumerate(batches, 1):
+        print(f"\n--- 第 {bi}/{len(batches)} 批 ---")
+        for ticker in batch:
+            result, err = analyze_stock(ticker)
+            if result is None:
+                print(f"{ticker:<10} ❌ {err}")
+                continue
+            results.append(result)
 
-        def _fmt(x):
-            return f"{x:.0f}" if x is not None else "N/A"
+            def _fmt(x):
+                return f"{x:.0f}" if x is not None else "N/A"
 
-        dwm_str = f"{_fmt(result['d_score'])}/{_fmt(result['w_score'])}/{_fmt(result['m_score'])}"
-        print(f"{result['ticker']:<10} {result['price']:>10.2f} {result['dwm_total']:>7.1f} "
-              f"{result['signal']:<8} {result['resonance']:<12} {result['risk']:<14} "
-              f"{dwm_str:<18} {result['rsi']:>6.1f}")
+            dwm_str = f"{_fmt(result['d_score'])}/{_fmt(result['w_score'])}/{_fmt(result['m_score'])}"
+            print(f"{result['ticker']:<10} {result['price']:>10.2f} {result['dwm_total']:>7.1f} "
+                  f"{result['signal']:<8} {result['resonance']:<12} {result['risk']:<14} "
+                  f"{dwm_str:<18} {result['rsi']:>6.1f}")
+        if bi < len(batches):
+            time.sleep(BATCH_PAUSE_SEC)
 
     results.sort(key=lambda x: -x['dwm_total'])
 

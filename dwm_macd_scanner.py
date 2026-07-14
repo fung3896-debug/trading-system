@@ -18,10 +18,11 @@ DWM MACD 金叉 + 零轴上方 扫描器 (Plan B 辅助模块)
 import warnings
 warnings.filterwarnings("ignore")
 
+import time
 import pandas as pd
 import numpy as np
-import yfinance as yf
 from datetime import datetime
+from yahoo_fetch import fetch_ohlcv
 
 # ============ 股票池 (沿用 Plan B 现有清单) ============
 
@@ -31,18 +32,64 @@ NASDAQ_LIST = [
 ]
 
 KLSE_LIST = [
-    "5263.KL",  # SUNCON
-    "6432.KL",  # APOLLO
-    "8133.KL",  # BHIC
-    "1694.KL",  # MENANG
-    "3174.KL",  # L&G
-    "2453.KL",  # KLUANG
-    "7121.KL",  # XL
-    "5127.KL",  # ARREIT
-    "0181.KL",  # AEMULUS
-    "0120.KL",  # VIS
-    "3158.KL",  # YNHPROP
+    "9393.KL",  # ITRONIC
+    "0029.KL",  # DIGISTA
+    "7181.KL",  # ARBB
+    "0143.KL",  # KEYASIC
+    "0200.KL",  # REVENUE
+    "4359.KL",  # TURIYA
+    "8338.KL",  # DATAPRP
+    "0041.KL",  # AIMAX
+    "0113.KL",  # MMSV
+    "9075.KL",  # THETA
+    "5036.KL",  # EDARAN
+    "5011.KL",  # MSNIAGA
+    "0126.KL",  # MICROLN
+    "0051.KL",  # CUSCAPI
+    "0065.KL",  # EFORCE
+    "5195.KL",  # CENSOF
+    "0258.KL",  # AGMO
+    "9377.KL",  # FSBM
+    "0253.KL",  # INFOTEC
+    "0040.KL",  # OPENSYS
+    "0008.KL",  # WILLOW
+    "0090.KL",  # ELSOFT
+    "9008.KL",  # OMESTI
+    "9334.KL",  # KESM
+    "7022.KL",  # GTRONIC
+    "0249.KL",  # LGMS
+    "5028.KL",  # HTPADU
+    "0277.KL",  # CLOUDPT
+    "0127.KL",  # JHM
+    "5204.KL",  # AWANTEC
+    "0104.KL",  # GENETEC
+    "0083.KL",  # NOTION
+    "0246.KL",  # CNERGEN
+    "0276.KL",  # ADB
+    "7204.KL",  # D&O
+    "0146.KL",  # JFTECH
+    "5161.KL",  # JCY
+    "0259.KL",  # SNS
+    "5216.KL",  # NEXG
+    "4456.KL",  # DNEX
+    "5301.KL",  # CTOS
+    "5162.KL",  # VSTECS
+    "7160.KL",  # PENTA
+    "5286.KL",  # MI
+    "5309.KL",  # ITMAX
+    "5357.KL",  # SKYECHIP
+    "0208.KL",  # GREATEC
+    "0138.KL",  # ZETRIX
+    "5292.KL",  # UWC
+    "5005.KL",  # UNISEM
+    "0166.KL",  # INARI
+    "0128.KL",  # FRONTKN
+    "3867.KL",  # MPI
+    "0097.KL",  # VITROX
 ]
+
+BATCH_SIZE = 10
+BATCH_PAUSE_SEC = 2
 
 # ============ MACD 计算 ============
 
@@ -86,20 +133,12 @@ def is_bullish_above_zero(dif: pd.Series, dea: pd.Series, cross_lookback: int = 
 
 # ============ 数据获取与重采样 ============
 
-def fetch_daily(ticker: str, period="7y") -> pd.DataFrame:
-    """获取日线数据 (7年历史,月线MACD计算需要足够长度)"""
-    try:
-        df = yf.Ticker(ticker).history(period=period, interval="1d", auto_adjust=True)
-        if df is None or df.empty:
-            return pd.DataFrame()
-        # 处理可能的 MultiIndex 列
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df = df[["Close"]].dropna()
-        return df
-    except Exception as e:
-        print(f"  [警告] {ticker} 数据获取失败: {e}")
+def fetch_daily(ticker: str, period="10y") -> pd.DataFrame:
+    """获取日线数据 (10年历史,月线MACD计算需要足够长度)"""
+    df = fetch_ohlcv(ticker, range_=period, interval="1d")
+    if df.empty:
         return pd.DataFrame()
+    return df[["Close"]].dropna()
 
 
 def resample_close(daily_close: pd.Series, rule: str) -> pd.Series:
@@ -151,14 +190,19 @@ def check_dwm_signal(ticker: str) -> dict:
 
 def scan_list(tickers: list, label: str) -> list:
     print(f"\n{'='*50}")
-    print(f"扫描 {label} ({len(tickers)} 支)")
+    print(f"扫描 {label} ({len(tickers)} 支, 分{(len(tickers) - 1) // BATCH_SIZE + 1}批, 每批{BATCH_SIZE}支)")
     print(f"{'='*50}")
 
     results = []
-    for t in tickers:
-        print(f"  处理中: {t} ...", end="\r")
-        r = check_dwm_signal(t)
-        results.append(r)
+    batches = [tickers[i:i + BATCH_SIZE] for i in range(0, len(tickers), BATCH_SIZE)]
+    for bi, batch in enumerate(batches, 1):
+        print(f"\n--- 第 {bi}/{len(batches)} 批 ---")
+        for t in batch:
+            print(f"  处理中: {t} ...", end="\r")
+            r = check_dwm_signal(t)
+            results.append(r)
+        if bi < len(batches):
+            time.sleep(BATCH_PAUSE_SEC)
 
     hits = [r for r in results if r.get("valid") and r.get("resonance")]
     return hits
