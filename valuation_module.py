@@ -84,6 +84,10 @@ def _polite_delay():
 # ------------------------------------------------------------------
 
 # 手動核對過的數據覆蓋 (從官方年報/財報確認，取代yfinance可能不準確的數字)
+# schema: capex/net_income/dep_amort 為基本欄位 (對應 Owner Earnings 模型)；
+#         eps/shares_out/fcf_latest 為選用欄位，補上後可讓 Graham (eps) 與 DCF (fcf_latest + shares_out)
+#         也改用年報核對數字，不必依賴 yfinance 抓取值。fetch_financials() 用 dict.update() 套用，
+#         不需要為新增欄位額外改動抓取邏輯。
 MANUAL_OVERRIDES = {
     "7103.KL": {
         # 來源: Spritzer Bhd Annual Report 2025, Management Discussion and Analysis - Cash Flows
@@ -109,6 +113,47 @@ MANUAL_OVERRIDES = {
         "capex": -47_914_000,
         "net_income": 394_246_000,
         "dep_amort": 28_142_000,
+    },
+    "0099.KL": {
+        # 來源: SCICOM (MSC) Berhad Annual Report 2025 (AR2025-16-DEC.pdf), 財年結算至2025年6月30日
+        # 年報原文: 資本支出 RM9.4 million; 歸屬股東淨利 RM20,345,000; 年報自行揭露自由現金流 RM34.9 million
+        # Basic EPS 5.72 sen -> 0.0572 (供Graham公式使用)
+        # ⚠️FY2025營收-11.3%/淨利-15.2%為衰退年，管理層FY2026僅指引"achieve positive net profit growth"未給具體數字，
+        # 原10%成長假設已過時，下修至3% (見 __main__ GROWTH_ASSUMPTIONS)
+        # 注: dep_amort未特別在年報摘要中核對，沿用yfinance抓取值(Depreciation And Amortization ~RM18.89m)；
+        # 交叉比對yfinance原始capex(-9,393,282)/net_income(20,344,850)與年報數字高度接近，
+        # 判斷此股不是像Spritzer/FIMACOR那種嚴重的yfinance數據陷阱案例，故未強制覆蓋dep_amort
+        "capex": -9_400_000,
+        "net_income": 20_345_000,
+        "eps": 0.0572,
+        "fcf_latest": 34_900_000,
+    },
+    "3107.KL": {
+        # 來源: Fima Corporation Berhad Annual Report FYE2025 (fimacorp.com/pdf/annual-reports/2025.pdf), 財年結算至2025年3月31日
+        # 年報原文: PATAMI(歸屬股東淨利) RM31,770,000; 加權平均股數237,000,000股; Basic EPS 13.40 sen
+        # ⚠️數據陷阱: yfinance原始抓取淨利僅RM21,403,000、FCF為正RM50,006,000，與年報實際數字差異巨大，
+        # 屬於本模組警示的yfinance capex/FCF不準案例之一(比照Spritzer案例)
+        # 年報真實FCF為負RM80,680,000，因資本支出暴增至RM75.64m(含RM49.73m一次性購入印刷設備)，
+        # 屬重資本支出週期而非經營惡化。DCF模型在FCF為負時不適用 -> 此股僅用Graham公式估值，
+        # 不覆蓋capex/dep_amort，Owner Earnings模型亦不計算 (與DCF同樣會被一次性資本支出扭曲)
+        "net_income": 31_770_000,
+        "shares_out": 237_000_000,
+        "eps": 0.1340,
+        "fcf_latest": -80_680_000,
+    },
+    "7115.KL": {
+        # 來源: SKB Shutters Corporation Berhad Annual Report FY2025 (SKB-AR2025-Bursa PDF)，
+        # 財年結算至2025年6月30日，現金流量表 p.51-55
+        # 年報原文: 歸屬股東淨利 RM25,799,285; 加權平均股數194,504,825股 (由股息總額反推驗證一致); Basic EPS 16.06 sen
+        # 購置廠房及設備(capex) RM17,233,979
+        # 折舊攤銷 = PP&E折舊3,627,883 + 使用權資產折舊1,232,080 + 投資性房地產7,428 = 4,867,391
+        # FCF = 營運現金流30,605,194 - Capex 17,233,979 = 13,371,215
+        "capex": -17_233_979,
+        "net_income": 25_799_285,
+        "dep_amort": 4_867_391,
+        "shares_out": 194_504_825,
+        "eps": 0.1606,
+        "fcf_latest": 13_371_215,
     },
 }
 
@@ -346,12 +391,17 @@ if __name__ == "__main__":
         # SUNCON: 近3年淨利CAGR 18.4%, 分析師預測未來3年EPS+18%/年, 訂單簿RM8.7B創高
         # -> 用15%(比分析師預測略保守)
         "5263.KL": 15,   # SUNCON
-        # SCICOM: TVET政府合約建置期(2025Q3-2026Q2業績受壓), STARS系統漲價紅利2026Q1起抵銷成本
-        # 市場預期2026Q3起獲利反彈, 但屬轉折點故事股波動大 -> 用10%保守估計
-        "0099.KL": 10,   # SCICOM
+        # SCICOM: FY2025年報實際為衰退年 (營收-11.3%/淨利-15.2%), 管理層FY2026僅指引
+        # "achieve positive net profit growth"未給具體數字, 原10%假設已過時 -> 下修至3%保守估計
+        "0099.KL": 3,    # SCICOM (年報核實後下修，原10%)
         # MHC: FY2025淨利+70%, 但主要是棕油(CPO)價格週期性上漲帶動, 非內生增長
         # 商品週期股不可外推單年爆發數字 -> 用8%保守估計
         "5026.KL": 8,    # MHC Plantations
+        # FIMACOR: 今年高成長主因CPO/CPKO商品價格上漲+製造業一次性大合同, 非穩定內生成長 -> 保守用3%
+        # (FCF因一次性資本支出RM75.64m轉負, DCF/Owner Earnings不適用, 僅Graham公式參考此增長率)
+        "3107.KL": 3,    # FIMACOR
+        # SKB Shutters: FY2025營收+19%/淨利+57.6%, 5年營收CAGR約21%, 保守取12%不外推極端值
+        "7115.KL": 12,   # SKB Shutters
         # 在這裡加入其他股票及其增長率假設
     }
 
