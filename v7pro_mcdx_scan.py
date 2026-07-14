@@ -206,6 +206,9 @@ def analyze_timeframe_last(tf_df: pd.DataFrame, min_len: int):
     }
 
 
+DOMINANT_LABEL = {0: '庄家', 1: '游资', 2: '散户'}
+
+
 def dwm_weighted_total(d, w, m, day_w=20.0, week_w=35.0, month_w=45.0):
     parts = []
     if d is not None:
@@ -214,6 +217,23 @@ def dwm_weighted_total(d, w, m, day_w=20.0, week_w=35.0, month_w=45.0):
         parts.append((w['total'], week_w))
     if m is not None:
         parts.append((m['total'], month_w))
+    if not parts:
+        return None
+    total_w = sum(wt for _, wt in parts)
+    return sum(val * wt for val, wt in parts) / total_w
+
+
+def dwm_weighted_banker(d, w, m, day_w=20.0, week_w=35.0, month_w=45.0):
+    """真·庄家强度：用原始 banker 值 (0-20，未混入游资分数) 做 DWM 加权平均，
+    权重沿用 dwm_weighted_total 同一套 20/35/45，让周月的庄家吸筹更能反映长期趋势，
+    避免像 mcdx_score 那样把 dominant=1(游资) 的高分也算进"庄家"里"""
+    parts = []
+    if d is not None:
+        parts.append((d['banker'], day_w))
+    if w is not None:
+        parts.append((w['banker'], week_w))
+    if m is not None:
+        parts.append((m['banker'], month_w))
     if not parts:
         return None
     total_w = sum(wt for _, wt in parts)
@@ -306,8 +326,10 @@ def analyze_stock(ticker: str):
         dwm_total = dwm_weighted_total(d_tf, w_tf, m_tf)
         if dwm_total is None:
             return None, "週期数据不足"
+        banker_strength = dwm_weighted_banker(d_tf, w_tf, m_tf)
 
         res_text, res_bull = resonance_text(d_tf, w_tf, m_tf)
+        dom_str = '/'.join(DOMINANT_LABEL[tf['dominant']] if tf else 'N/A' for tf in (d_tf, w_tf, m_tf))
 
         # 简化版风险判断 (对齐 Pine 第16节优先级: danger > 背离 > 正常)
         # 注：Pine 的 danger 需要週线趋势与 MA200，这里用近似条件
@@ -338,6 +360,11 @@ def analyze_stock(ticker: str):
             'banker': d_tf['banker'] if d_tf else None,
             'hot': d_tf['hot'] if d_tf else None,
             'retail': d_tf['retail'] if d_tf else None,
+            'banker_d': d_tf['banker'] if d_tf else None,
+            'banker_w': w_tf['banker'] if w_tf else None,
+            'banker_m': m_tf['banker'] if m_tf else None,
+            'banker_strength': banker_strength,
+            'dominant_dwm': dom_str,
         }, None
 
     except Exception as e:
@@ -351,7 +378,7 @@ def scan_market(market_name: str, emoji: str, tickers: list):
     print(f"\n{'='*110}")
     print(f"{emoji} {market_name}  |  时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"{'='*110}")
-    print(f"{'代码':<10} {'价格':>10} {'总分':>7} {'信号':<8} {'MCDX共振':<12} {'风险':<14} {'D/W/M分':<18} {'RSI':>6}")
+    print(f"{'代码':<10} {'价格':>10} {'总分':>7} {'信号':<8} {'MCDX共振':<12} {'主导(D/W/M)':<14} {'风险':<14} {'D/W/M分':<18} {'RSI':>6}")
     print("-" * 110)
 
     results = []
@@ -367,16 +394,26 @@ def scan_market(market_name: str, emoji: str, tickers: list):
 
         dwm_str = f"{_fmt(result['d_score'])}/{_fmt(result['w_score'])}/{_fmt(result['m_score'])}"
         print(f"{result['ticker']:<10} {result['price']:>10.2f} {result['dwm_total']:>7.1f} "
-              f"{result['signal']:<8} {result['resonance']:<12} {result['risk']:<14} "
+              f"{result['signal']:<8} {result['resonance']:<12} {result['dominant_dwm']:<14} {result['risk']:<14} "
               f"{dwm_str:<18} {result['rsi']:>6.1f}")
 
     results.sort(key=lambda x: -x['dwm_total'])
 
-    print(f"\n🏆 {market_name} Top 5 (含背离警告标注)")
+    print(f"\n🏆 {market_name} Top 5 (MCDX总分，含背离警告标注 — 注意分数可能由游资撑起，非真庄家)")
     for r in results[:5]:
         div_tag = " 【⚠️背离】" if r['bearish_div'] else ""
         print(f"{r['ticker']:<10} ${r['price']:>9.2f}  总分:{r['dwm_total']:>6.1f} {r['signal']}  "
-              f"{r['resonance']}  RSI:{r['rsi']:>5.1f} CMF:{r['cmf']:>6.3f}{div_tag}")
+              f"{r['resonance']}  主导:{r['dominant_dwm']}  RSI:{r['rsi']:>5.1f} CMF:{r['cmf']:>6.3f}{div_tag}")
+
+    banker_ranked = sorted(
+        [r for r in results if r['banker_strength'] is not None],
+        key=lambda x: -x['banker_strength']
+    )
+    print(f"\n🏦 {market_name} 真庄家 Top 5 (按 banker 原始值加权排序，日20%/周35%/月45%，剔除游资分数干扰)")
+    for r in banker_ranked[:5]:
+        print(f"{r['ticker']:<10} ${r['price']:>9.2f}  庄家强度:{r['banker_strength']:>5.1f}/20  "
+              f"D/W/M banker: {r['banker_d']:.1f}/{r['banker_w']:.1f}/{r['banker_m']:.1f}  "
+              f"主导:{r['dominant_dwm']}  MCDX总分:{r['dwm_total']:.1f}")
 
     return results
 
