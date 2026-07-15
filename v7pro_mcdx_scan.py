@@ -307,14 +307,24 @@ def dwm_weighted_banker(d, w, m, day_w=20.0, week_w=35.0, month_w=45.0):
 
 
 def real_banker_flag(d_tf, w_tf, m_tf):
-    """区分『真庄家』与『纯游资』推动的共振 (对齐 Pine isRealBankerDWM / isHotMoneyOnlyDWM)
+    """区分『真庄家』『双强』与『纯游资』推动的共振 (对齐 Pine isRealBankerDWM / isHotMoneyOnlyDWM)
     Python 原本的 resonance_text 只看 mcdx_score 门槛，dominant=1(游资)一样能推高分数触发
-    "🚀日周月满"，不区分这是真庄家控盘还是纯游资炒作——这里补上这个区分"""
+    "🚀日周月满"，不区分这是真庄家控盘还是纯游资炒作——这里补上这个区分。
+
+    修正 (VITROX案例发现): dominant 是赢家通吃——banker 和 hot 只要同时逼近20分封顶，
+    banker 分数其实很强(远超中等门槛)，只是每一根都被更极端的hot money窄幅反超，
+    赢家标签会在 0/1 之间逐周/逐日翻转 (对照TradingView真实MCDX面板红黄交替可确认)。
+    这种情况不该打成"纯游资无真庄家"，而是"双强"——庄家资金确实同步在场。
+    只有 banker 分数本身在 D/W/M 都低于中等门槛(真的很弱/缺席)时，才算纯游资。"""
     if d_tf is None or w_tf is None or m_tf is None:
         return "N/A"
     d, w, m = d_tf['dominant'], w_tf['dominant'], m_tf['dominant']
+    bk_d, bk_w, bk_m = d_tf['banker'], w_tf['banker'], m_tf['banker']
+
     if d == 0 and w == 0 and m == 0:
         return "🟢 真庄家DWM满控"
+    if bk_d >= MEDIUM_TH and bk_w >= MEDIUM_TH and bk_m >= MEDIUM_TH:
+        return "🔴🟡 双强(庄家游资同时强)"
     if d == 1 and w == 1 and m == 1:
         return "🟠 纯游资DWM(无真庄家)"
     return "-"
