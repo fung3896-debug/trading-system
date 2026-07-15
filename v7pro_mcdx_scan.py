@@ -290,6 +290,36 @@ def resonance_text(d_tf, w_tf, m_tf):
         return "⚠️ 未共振", False
 
 
+def dwm_weighted_banker(d, w, m, day_w=20.0, week_w=35.0, month_w=45.0):
+    """真庄家强度：只用 banker 原始值(0-20) 做 DWM 加权，不混入游资/散户分数
+    (对齐 Pine 脚本的 bankerStrength)"""
+    parts = []
+    if d is not None:
+        parts.append((d['banker'], day_w))
+    if w is not None:
+        parts.append((w['banker'], week_w))
+    if m is not None:
+        parts.append((m['banker'], month_w))
+    if not parts:
+        return None
+    total_w = sum(wt for _, wt in parts)
+    return sum(val * wt for val, wt in parts) / total_w
+
+
+def real_banker_flag(d_tf, w_tf, m_tf):
+    """区分『真庄家』与『纯游资』推动的共振 (对齐 Pine isRealBankerDWM / isHotMoneyOnlyDWM)
+    Python 原本的 resonance_text 只看 mcdx_score 门槛，dominant=1(游资)一样能推高分数触发
+    "🚀日周月满"，不区分这是真庄家控盘还是纯游资炒作——这里补上这个区分"""
+    if d_tf is None or w_tf is None or m_tf is None:
+        return "N/A"
+    d, w, m = d_tf['dominant'], w_tf['dominant'], m_tf['dominant']
+    if d == 0 and w == 0 and m == 0:
+        return "🟢 真庄家DWM满控"
+    if d == 1 and w == 1 and m == 1:
+        return "🟠 纯游资DWM(无真庄家)"
+    return "-"
+
+
 # =====================================================
 # 5. 背离侦测 (对齐 Pine 8.5 节)
 # =====================================================
@@ -361,6 +391,8 @@ def analyze_stock(ticker: str):
             return None, "週期数据不足"
 
         res_text, res_bull = resonance_text(d_tf, w_tf, m_tf)
+        banker_strength = dwm_weighted_banker(d_tf, w_tf, m_tf)
+        banker_flag = real_banker_flag(d_tf, w_tf, m_tf)
 
         # 简化版风险判断 (对齐 Pine 第16节优先级: danger > 背离 > 正常)
         # 注：Pine 的 danger 需要週线趋势与 MA200，这里用近似条件
@@ -391,6 +423,8 @@ def analyze_stock(ticker: str):
             'banker': d_tf['banker'] if d_tf else None,
             'hot': d_tf['hot'] if d_tf else None,
             'retail': d_tf['retail'] if d_tf else None,
+            'banker_strength': banker_strength,
+            'banker_flag': banker_flag,
         }, None
 
     except Exception as e:
@@ -405,7 +439,7 @@ def scan_market(market_name: str, emoji: str, tickers: list):
     print(f"\n{'='*110}")
     print(f"{emoji} {market_name}  |  时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  分{n_batches}批, 每批{BATCH_SIZE}支")
     print(f"{'='*110}")
-    print(f"{'代码':<10} {'价格':>10} {'总分':>7} {'信号':<8} {'MCDX共振':<12} {'风险':<14} {'D/W/M分':<18} {'RSI':>6}")
+    print(f"{'代码':<10} {'价格':>10} {'总分':>7} {'信号':<8} {'MCDX共振':<12} {'真庄家/游资':<18} {'风险':<14} {'D/W/M分':<18} {'RSI':>6}")
     print("-" * 110)
 
     results = []
@@ -424,7 +458,7 @@ def scan_market(market_name: str, emoji: str, tickers: list):
 
             dwm_str = f"{_fmt(result['d_score'])}/{_fmt(result['w_score'])}/{_fmt(result['m_score'])}"
             print(f"{result['ticker']:<10} {result['price']:>10.2f} {result['dwm_total']:>7.1f} "
-                  f"{result['signal']:<8} {result['resonance']:<12} {result['risk']:<14} "
+                  f"{result['signal']:<8} {result['resonance']:<12} {result['banker_flag']:<18} {result['risk']:<14} "
                   f"{dwm_str:<18} {result['rsi']:>6.1f}")
         if bi < len(batches):
             time.sleep(BATCH_PAUSE_SEC)
@@ -434,8 +468,18 @@ def scan_market(market_name: str, emoji: str, tickers: list):
     print(f"\n🏆 {market_name} Top 5 (含背离警告标注)")
     for r in results[:5]:
         div_tag = " 【⚠️背离】" if r['bearish_div'] else ""
+        bs = f"{r['banker_strength']:.1f}" if r['banker_strength'] is not None else "N/A"
         print(f"{r['ticker']:<10} ${r['price']:>9.2f}  总分:{r['dwm_total']:>6.1f} {r['signal']}  "
-              f"{r['resonance']}  RSI:{r['rsi']:>5.1f} CMF:{r['cmf']:>6.3f}{div_tag}")
+              f"{r['resonance']}  真庄家强度:{bs}/20 {r['banker_flag']}  RSI:{r['rsi']:>5.1f} CMF:{r['cmf']:>6.3f}{div_tag}")
+
+    print(f"\n🔍 {market_name} MCDX共振清单中『真庄家 vs 纯游资』区分 (对齐 Pine isRealBankerDWM/isHotMoneyOnlyDWM)")
+    resonance_hits = [r for r in results if r['resonance'] in ('🚀 日周月满', '✅ 日周月偏多')]
+    if not resonance_hits:
+        print("  (本次无共振信号)")
+    for r in sorted(resonance_hits, key=lambda x: -x['dwm_total']):
+        bs = f"{r['banker_strength']:.1f}" if r['banker_strength'] is not None else "N/A"
+        div_tag = " 【⚠️顶背离】" if r['bearish_div'] else ""
+        print(f"  {r['ticker']:<10} {r['resonance']:<12} {r['banker_flag']:<20} 真庄家强度:{bs}/20{div_tag}")
 
     return results
 
