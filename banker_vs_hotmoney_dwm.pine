@@ -1,0 +1,189 @@
+//@version=6
+indicator("真庄家 vs 游资 DWM 强度 (对齐 v7pro_mcdx_scan.py)", overlay=false, max_labels_count=500)
+
+// =====================================================
+// 输入参数 (与 v7pro_mcdx_scan.py 常数完全对齐)
+// =====================================================
+bankerPeriod = input.int(50, "庄家 RSI 周期", group = "MCDX 参数")
+bankerBase   = input.float(50.0, "庄家基准", group = "MCDX 参数")
+bankerSens   = input.float(1.4, "庄家灵敏度", group = "MCDX 参数")
+hotPeriod    = input.int(40, "游资 RSI 周期", group = "MCDX 参数")
+hotBase      = input.float(30.0, "游资基准", group = "MCDX 参数")
+hotSens      = input.float(0.65, "游资灵敏度", group = "MCDX 参数")
+strongTh     = input.float(14.0, "强势门槛 (0-20)", group = "MCDX 参数")
+mediumTh     = input.float(7.0, "中等门槛 (0-20)", group = "MCDX 参数")
+
+dayWeight    = input.float(20.0, "日线权重 %", group = "真庄家强度 (DWM加权)")
+weekWeight   = input.float(35.0, "周线权重 %", group = "真庄家强度 (DWM加权)")
+monthWeight  = input.float(45.0, "月线权重 %", group = "真庄家强度 (DWM加权)")
+
+maLen1      = input.int(20, "MA短", group = "信号系统")
+maLen2      = input.int(50, "MA中", group = "信号系统")
+maLen3      = input.int(200, "MA长 / 逃命线", group = "信号系统")
+rsiLen      = input.int(14, "RSI周期", group = "信号系统")
+divLookback = input.int(20, "顶背离回看根数", group = "信号系统")
+divRsiMin   = input.float(60.0, "顶背离RSI门槛", group = "信号系统")
+addRiseLen  = input.int(5, "加仓：庄家强度连续走高根数", group = "信号系统")
+pullbackPct = input.float(3.0, "回踩：价格贴近MA短的容许幅度 %", group = "信号系统")
+
+// =====================================================
+// 核心 MCDX 计算 (banker / hot / retail / dominant)
+// dominant: 0=庄家  1=游资  2=散户  -1=无主导
+// =====================================================
+f_banker(src) =>
+    rsiBanker = ta.rsi(src, bankerPeriod)
+    math.min(math.max(bankerSens * (rsiBanker - bankerBase), 0.0), 20.0)
+
+f_hot(src) =>
+    rsiHot = ta.rsi(src, hotPeriod)
+    math.min(math.max(hotSens * (rsiHot - hotBase), 0.0), 20.0)
+
+f_retail(src) =>
+    banker = f_banker(src)
+    hot    = f_hot(src)
+    math.min(math.max(20.0 - math.max(banker, hot), 0.0), 20.0)
+
+f_dominant(src) =>
+    banker = f_banker(src)
+    hot    = f_hot(src)
+    retail = math.min(math.max(20.0 - math.max(banker, hot), 0.0), 20.0)
+    dom = -1.0
+    if banker >= mediumTh and banker >= hot and banker >= retail
+        dom := 0.0
+    else if hot >= mediumTh and hot >= banker and hot >= retail
+        dom := 1.0
+    else if retail >= mediumTh and retail >= banker and retail >= hot
+        dom := 2.0
+    dom
+
+f_macd(src) =>
+    [macdLine, signalLine, _] = ta.macd(src, 12, 26, 9)
+    [macdLine, signalLine]
+
+// =====================================================
+// 日 / 周 / 月 三层取值 (固定拉 D/W/M，不受当前图表周期影响，
+// 跟 python 版 resample_ohlcv 到 'D'/'W'/'ME' 的行为一致)
+// =====================================================
+bD = request.security(syminfo.tickerid, "D", f_banker(close), lookahead = barmerge.lookahead_off)
+bW = request.security(syminfo.tickerid, "W", f_banker(close), lookahead = barmerge.lookahead_off)
+bM = request.security(syminfo.tickerid, "M", f_banker(close), lookahead = barmerge.lookahead_off)
+
+domD = request.security(syminfo.tickerid, "D", f_dominant(close), lookahead = barmerge.lookahead_off)
+domW = request.security(syminfo.tickerid, "W", f_dominant(close), lookahead = barmerge.lookahead_off)
+domM = request.security(syminfo.tickerid, "M", f_dominant(close), lookahead = barmerge.lookahead_off)
+
+// =====================================================
+// 真庄家强度：只用 banker 原始值做 DWM 加权，不混入游资分数
+// (对齐 python 的 dwm_weighted_banker())
+// =====================================================
+totalW = dayWeight + weekWeight + monthWeight
+bankerStrength = (bD * dayWeight + bW * weekWeight + bM * monthWeight) / totalW
+
+isRealBankerDWM = domD == 0 and domW == 0 and domM == 0   // 真庄家日周月全控盘
+isHotMoneyOnlyDWM = domD == 1 and domW == 1 and domM == 1 // 纯游资推动，无真庄家参与
+
+f_domLabel(d) =>
+    d == 0 ? "庄家" : d == 1 ? "游资" : d == 2 ? "散户" : "N/A"
+
+f_domColor(d) =>
+    d == 0 ? color.lime : d == 1 ? color.orange : d == 2 ? color.red : color.gray
+
+// =====================================================
+// 信号系统：逃命 / 减仓 / 卖出点 / 买入点 / 加仓 / 回踩
+// 固定用日线 (D) 判断趋势与背离，跟 python 版 detect_bearish_divergence /
+// danger 判断口径一致；banker/dominant 沿用上面已经算好的 D/W/M 序列
+// =====================================================
+closeD  = request.security(syminfo.tickerid, "D", close, lookahead = barmerge.lookahead_off)
+ma20D   = request.security(syminfo.tickerid, "D", ta.sma(close, maLen1), lookahead = barmerge.lookahead_off)
+ma50D   = request.security(syminfo.tickerid, "D", ta.sma(close, maLen2), lookahead = barmerge.lookahead_off)
+ma200D  = request.security(syminfo.tickerid, "D", ta.sma(close, maLen3), lookahead = barmerge.lookahead_off)
+rsiD    = request.security(syminfo.tickerid, "D", ta.rsi(close, rsiLen), lookahead = barmerge.lookahead_off)
+retailD = request.security(syminfo.tickerid, "D", f_retail(close), lookahead = barmerge.lookahead_off)
+[difD, deaD] = request.security(syminfo.tickerid, "D", f_macd(close), lookahead = barmerge.lookahead_off)
+
+// 顶背离 (对齐 python 8.5 节)：价格创20日新高，但 RSI 或 banker 没跟上创高，且 RSI>60
+priceHighest      = closeD >= ta.highest(closeD, divLookback)
+rsiHighestPrev     = ta.highest(rsiD[1], divLookback)
+bankerHighestPrev  = ta.highest(bD[1], divLookback)
+bearishDiv = priceHighest and (rsiD < rsiHighestPrev or bD < bankerHighestPrev) and rsiD > divRsiMin
+
+// 危险 (对齐 python 第16节 danger)：跌破年线 200MA，或日线散户强力主导 (retail>=中等门槛)
+danger = (not na(ma200D) and closeD < ma200D) or (domD == 2 and retailD >= mediumTh)
+
+// ---- 六种信号，优先级：逃命 > 卖出点 > 减仓 > 买入点 > 加仓 > 回踩 ----
+sigFlee    = danger
+sigSell    = not sigFlee and ta.crossunder(difD, deaD) and closeD < ma20D
+sigReduce  = not sigFlee and not sigSell and bearishDiv
+sigBuy     = not sigFlee and not sigSell and not sigReduce and ta.crossover(difD, deaD) and closeD > ma20D and (domD == 0 or domD == 1)
+sigAdd     = not sigFlee and not sigSell and not sigReduce and not sigBuy and closeD > ma20D and ma20D > ma50D and ta.rising(bankerStrength, addRiseLen) and domW != 2 and domM != 2
+sigPullback = not sigFlee and not sigSell and not sigReduce and not sigBuy and not sigAdd and
+     math.abs(closeD - ma20D) / ma20D * 100.0 <= pullbackPct and ma20D > ma50D and (domW == 0 or domM == 0)
+
+f_signalLabel() =>
+    sigFlee ? "🏃 逃命" : sigSell ? "🔴 卖出点" : sigReduce ? "🟠 减仓" : sigBuy ? "🟢 买入点" : sigAdd ? "🔵 加仓" : sigPullback ? "🟡 回踩" : "⚪ 无信号"
+
+// =====================================================
+// 绘图
+// =====================================================
+plot(bankerStrength, "真庄家强度 (0-20)", color = color.new(#f5a623, 0), linewidth = 2)
+hline(strongTh, "强庄门槛", color = color.gray, linestyle = hline.style_dashed)
+hline(mediumTh, "中等门槛", color = color.gray, linestyle = hline.style_dotted)
+bgcolor(isRealBankerDWM ? color.new(color.green, 85) : isHotMoneyOnlyDWM ? color.new(color.orange, 90) : na)
+
+plotshape(isRealBankerDWM and not isRealBankerDWM[1], title = "真庄家DWM满仓触发",
+     style = shape.triangleup, location = location.bottom, color = color.lime, size = size.tiny)
+
+// =====================================================
+// 六信号绘图 (逃命/卖出点/减仓/买入点/加仓/回踩)
+// =====================================================
+plotshape(sigFlee, title = "逃命", style = shape.xcross, location = location.top,
+     color = color.new(color.maroon, 0), size = size.small, text = "逃命")
+plotshape(sigSell, title = "卖出点", style = shape.triangledown, location = location.top,
+     color = color.new(color.red, 0), size = size.small, text = "卖出")
+plotshape(sigReduce, title = "减仓", style = shape.circle, location = location.top,
+     color = color.new(color.orange, 0), size = size.tiny, text = "减仓")
+plotshape(sigBuy, title = "买入点", style = shape.triangleup, location = location.bottom,
+     color = color.new(color.lime, 0), size = size.small, text = "买入")
+plotshape(sigAdd, title = "加仓", style = shape.circle, location = location.bottom,
+     color = color.new(color.blue, 0), size = size.tiny, text = "加仓")
+plotshape(sigPullback, title = "回踩", style = shape.diamond, location = location.bottom,
+     color = color.new(color.yellow, 0), size = size.tiny, text = "回踩")
+
+alertcondition(sigFlee, title = "逃命信号", message = "{{ticker}} 逃命：跌破年线或散户强力主导，建议立即清仓")
+alertcondition(sigSell, title = "卖出点信号", message = "{{ticker}} 卖出点：MACD死叉且跌破MA20")
+alertcondition(sigReduce, title = "减仓信号", message = "{{ticker}} 减仓：出现顶背离警告")
+alertcondition(sigBuy, title = "买入点信号", message = "{{ticker}} 买入点：MACD金叉且庄家/游资主导确立")
+alertcondition(sigAdd, title = "加仓信号", message = "{{ticker}} 加仓：真庄家强度持续走高，趋势延续")
+alertcondition(sigPullback, title = "回踩信号", message = "{{ticker}} 回踩：价格贴近MA20支撑，周/月庄家仍在")
+
+// =====================================================
+// 状态表 (右下角)：D/W/M 各自主导类型 + banker 原始值 + 加权真庄家强度
+// =====================================================
+var table t = table.new(position.bottom_right, 2, 7, border_width = 1)
+if barstate.islast
+    table.cell(t, 0, 0, "周期", bgcolor = color.gray, text_color = color.white)
+    table.cell(t, 1, 0, "主导 / banker值", bgcolor = color.gray, text_color = color.white)
+    table.cell(t, 0, 1, "日 D", text_color = color.white)
+    table.cell(t, 1, 1, f_domLabel(domD) + "  " + str.tostring(bD, "#.#"), text_color = f_domColor(domD))
+    table.cell(t, 0, 2, "周 W", text_color = color.white)
+    table.cell(t, 1, 2, f_domLabel(domW) + "  " + str.tostring(bW, "#.#"), text_color = f_domColor(domW))
+    table.cell(t, 0, 3, "月 M", text_color = color.white)
+    table.cell(t, 1, 3, f_domLabel(domM) + "  " + str.tostring(bM, "#.#"), text_color = f_domColor(domM))
+    table.cell(t, 0, 4, "真庄家强度", text_color = color.white)
+    table.cell(t, 1, 4, str.tostring(bankerStrength, "#.#") + " / 20",
+         text_color = bankerStrength >= strongTh ? color.lime : bankerStrength >= mediumTh ? color.yellow : color.red)
+    table.cell(t, 0, 5, "顶背离", text_color = color.white)
+    table.cell(t, 1, 5, bearishDiv ? "⚠️ 是" : "否", text_color = bearishDiv ? color.orange : color.gray)
+    table.cell(t, 0, 6, "当前信号", bgcolor = color.gray, text_color = color.white)
+    table.cell(t, 1, 6, f_signalLabel(), bgcolor = color.gray,
+         text_color = sigFlee or sigSell ? color.red : sigReduce ? color.orange : sigBuy ? color.lime : sigAdd ? color.aqua : sigPullback ? color.yellow : color.white)
+
+// =====================================================
+// 供其他脚本 export 使用 (方便合并进主 V7pro 指标时直接引用)
+// =====================================================
+plot(bD, "banker_D", display = display.data_window)
+plot(bW, "banker_W", display = display.data_window)
+plot(bM, "banker_M", display = display.data_window)
+plot(domD, "dominant_D", display = display.data_window)
+plot(domW, "dominant_W", display = display.data_window)
+plot(domM, "dominant_M", display = display.data_window)

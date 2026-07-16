@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# valuation_module.py runtime cache (7-day TTL, regenerated from yfinance)
+valuation_cache/
