@@ -45,12 +45,20 @@ from v7pro_mcdx_scan import (
     calc_mcdx_series,
     resample_ohlcv,
     analyze_timeframe_last,
+    compute_resonance_score,
+    compute_monthly_persistence,
+    is_sweet_spot,
+    scan_sweet_spot,
     BANKER_PERIOD,
     HOT_PERIOD,
     STRONG_TH,
     MEDIUM_TH,
     DWM_BULL_TH,
     DWM_STRONG_TH,
+    RED_RATIO_LOW,
+    RED_RATIO_HIGH,
+    PERSIST_WINDOW_MONTHS,
+    SWEET_SPOT_RESONANCE_MIN,
 )
 from dwm_macd_scanner import check_dwm_signal
 
@@ -105,12 +113,15 @@ FETCH_PERIOD = "7y"           # 见文件头【重要偏差说明】
 LIQUIDITY_MIN_MYR = 50_000.0  # 近20日均成交额门槛
 LIQUIDITY_LOOKBACK = 20
 
-PERSIST_WINDOW_MONTHS = 18
-RED_RATIO_LOW, RED_RATIO_HIGH = 0.60, 0.85
-RESONANCE_MIN = DWM_BULL_TH  # 55
+# red_ratio / resonance 的窗口与门槛现在统一定义在 v7pro_mcdx_scan.py
+# (PERSIST_WINDOW_MONTHS / RED_RATIO_LOW / RED_RATIO_HIGH / SWEET_SPOT_RESONANCE_MIN)，
+# 这里直接复用，避免跟那边的定义各写一份、日后悄悄跑偏。
+RESONANCE_MIN = SWEET_SPOT_RESONANCE_MIN  # 55
 
 DW_MIN_LEN = max(BANKER_PERIOD, HOT_PERIOD) + 10  # 60，跟 v7pro 保持一致
-MONTHLY_MIN_LEN = BANKER_PERIOD                    # 50，月线至少要有一个合法读数
+
+# Tier 分类允许纳入 sweet spot 起飞信号扫描的档位 (Tier 3 排除)
+SWEET_SPOT_ALERT_TIERS = {"Tier 1", "Tier 1B", "Tier 2"}
 
 
 # =====================================================
@@ -140,48 +151,7 @@ def compute_liquidity(df: pd.DataFrame):
 
 
 # =====================================================
-# 3. 月线持续性 (red_ratio / red_streak) —— 复用 calc_mcdx_series()
-# =====================================================
-def compute_monthly_persistence(daily_df: pd.DataFrame):
-    monthly_df = resample_ohlcv(daily_df, "ME")
-    total_months = len(monthly_df)
-
-    valid_count = max(0, total_months - (BANKER_PERIOD - 1))
-    if valid_count <= 0:
-        return {
-            "m_score": None, "red_ratio": None, "red_streak": None,
-            "window_months": 0, "full_window": False, "monthly_df_len": total_months,
-        }
-
-    _, _, _, dominant, _ = calc_mcdx_series(monthly_df["Close"])
-    window_n = min(PERSIST_WINDOW_MONTHS, valid_count)
-    dom_window = dominant.tail(window_n)
-
-    red_count = int((dom_window == 0).sum())
-    red_ratio = red_count / window_n
-
-    streak = 0
-    for v in dom_window.iloc[::-1]:
-        if v == 0:
-            streak += 1
-        else:
-            break
-
-    m_tf = analyze_timeframe_last(monthly_df, min_len=MONTHLY_MIN_LEN)
-    m_score = m_tf["mcdx_score"] if m_tf else None
-
-    return {
-        "m_score": m_score,
-        "red_ratio": red_ratio,
-        "red_streak": streak,
-        "window_months": window_n,
-        "full_window": window_n == PERSIST_WINDOW_MONTHS,
-        "monthly_df_len": total_months,
-    }
-
-
-# =====================================================
-# 4. Tier 分类
+# 3. Tier 分类
 # =====================================================
 def classify_tier(w_score, m_score):
     cond_w = w_score is not None and w_score >= 100
@@ -196,15 +166,17 @@ def classify_tier(w_score, m_score):
 
 
 # =====================================================
-# 5. 单一股票完整分析
+# 4. 单一股票完整分析
 # =====================================================
-def analyze_ticker(ticker: str, name: str) -> dict:
+def analyze_ticker(ticker: str, name: str):
+    """回传 (record, df)。df 是原始日线 OHLCV (失败时为 None)，
+    留给后面的 sweet spot 起飞信号扫描复用，不必重新抓一次。"""
     record = {"ticker": ticker, "name": name, "error": None}
 
     df = fetch_daily(ticker)
     if df is None or len(df) < DW_MIN_LEN:
         record["error"] = "数据不足"
-        return record
+        return record, None
 
     liquidity = compute_liquidity(df)
     record["liquidity_myr"] = liquidity
@@ -213,40 +185,62 @@ def analyze_ticker(ticker: str, name: str) -> dict:
     d_tf = analyze_timeframe_last(df, min_len=DW_MIN_LEN)
     weekly_df = resample_ohlcv(df, "W")
     w_tf = analyze_timeframe_last(weekly_df, min_len=DW_MIN_LEN)
+    monthly_df = resample_ohlcv(df, "ME")
+    m_tf = analyze_timeframe_last(monthly_df, min_len=BANKER_PERIOD)
 
     d_score = d_tf["mcdx_score"] if d_tf else None
     w_score = w_tf["mcdx_score"] if w_tf else None
+    m_score = m_tf["mcdx_score"] if m_tf else None
 
-    mstats = compute_monthly_persistence(df)
-    m_score = mstats["m_score"]
+    red_ratio, red_streak, window_n = compute_monthly_persistence(df)
 
     record.update({
         "d_score": d_score,
         "w_score": w_score,
         "m_score": m_score,
-        "red_ratio": mstats["red_ratio"],
-        "red_streak": mstats["red_streak"],
-        "red_window_months": mstats["window_months"],
-        "red_window_full": mstats["full_window"],
+        "red_ratio": red_ratio,
+        "red_streak": red_streak,
+        "red_window_months": window_n,
+        "red_window_full": window_n == PERSIST_WINDOW_MONTHS,
         "tier": classify_tier(w_score, m_score),
-        "is_new_listing": mstats["m_score"] is None and mstats["monthly_df_len"] < BANKER_PERIOD,
+        "is_new_listing": red_ratio is None,
     })
 
-    resonance = None
-    if d_score is not None and w_score is not None and m_score is not None:
-        resonance = min(d_score, w_score, m_score)
+    resonance = compute_resonance_score(d_tf, w_tf, m_tf)
     record["resonance"] = resonance
-
-    record["sweet_spot"] = bool(
-        resonance is not None and resonance >= RESONANCE_MIN
-        and record["red_ratio"] is not None
-        and RED_RATIO_LOW <= record["red_ratio"] <= RED_RATIO_HIGH
-    )
+    record["sweet_spot"] = is_sweet_spot(resonance, red_ratio)
 
     dwm = check_dwm_signal(ticker)
     record["dwm_macd_resonance"] = dwm.get("resonance") if dwm.get("valid") else None
 
-    return record
+    return record, df
+
+
+# =====================================================
+# 5. Sweet Spot 起飞信号 (刚进入区间，非旧信号)
+# =====================================================
+def scan_sweet_spot_alerts(pairs):
+    """pairs: [(record, df), ...]，只挑 Tier 1/1B/2 + 流动性达标的股票，
+    用 v7pro_mcdx_scan.scan_sweet_spot() 判断今天是否『刚进入』sweet spot。"""
+    alerts = []
+    for record, df in pairs:
+        if record.get("error") or df is None:
+            continue
+        if record["tier"] not in SWEET_SPOT_ALERT_TIERS:
+            continue
+        if not record.get("liquidity_ok"):
+            continue
+
+        result = scan_sweet_spot(df)
+        if result["just_entered"]:
+            alerts.append({
+                "ticker": record["ticker"],
+                "name": record["name"],
+                "resonance": result["resonance"],
+                "red_ratio": result["red_ratio"],
+                "entry_date": result["date"],
+            })
+    return alerts
 
 
 # =====================================================
@@ -294,13 +288,14 @@ def main():
     print(f"{'#'*100}\n📊 Industry MCDX Tier 分类 + 完整 Sweet Spot 批量扫描\n"
           f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n{'#'*100}")
 
-    all_records = []
+    all_pairs = []
     for i, (ticker, name) in enumerate(TICKERS.items(), 1):
         print(f"[{i}/{len(TICKERS)}] 扫描 {ticker} ({name}) ...")
-        all_records.append(analyze_ticker(ticker, name))
+        all_pairs.append(analyze_ticker(ticker, name))
+    all_records = [r for r, _df in all_pairs]
 
     print(f"\n[持仓] 扫描 {HOLDING_TICKER} ({HOLDING_NAME}) ...")
-    holding_record = analyze_ticker(HOLDING_TICKER, HOLDING_NAME)
+    holding_record, holding_df = analyze_ticker(HOLDING_TICKER, HOLDING_NAME)
 
     errored = [r for r in all_records if r.get("error")]
     ok_records = [r for r in all_records if not r.get("error")]
@@ -320,6 +315,16 @@ def main():
     else:
         print("(本次扫描无命中)")
 
+    sweet_spot_alerts = scan_sweet_spot_alerts(all_pairs)
+    print(f"\n{'='*100}\n🚀 Sweet Spot 起飞信号 ({len(sweet_spot_alerts)} 支，仅限 Tier 1/1B/2 且今天『刚进入』区间)\n{'='*100}")
+    if sweet_spot_alerts:
+        for a in sweet_spot_alerts:
+            entry_date = a["entry_date"].strftime("%Y-%m-%d") if a["entry_date"] is not None else "N/A"
+            print(f"  🚀 {a['ticker']:<10} {a['name']:<10} resonance={fmt(a['resonance'],0):<6} "
+                  f"red_ratio={fmt(a['red_ratio'],2):<6} 进入日期={entry_date}")
+    else:
+        print("(本次扫描无新进入信号——沿用旧信号的股票不重复报)")
+
     if excluded_liquidity:
         print(f"\n{'='*100}\n流动性剔除 ({len(excluded_liquidity)} 支，近20日均成交额 < RM{LIQUIDITY_MIN_MYR:,.0f})\n{'='*100}")
         for r in excluded_liquidity:
@@ -338,6 +343,10 @@ def main():
         print(f"  DWM MACD 金叉+零轴上方 三线共振: {fmt(holding_record.get('dwm_macd_resonance'))}")
         print(f"  流动性达标: {fmt(holding_record.get('liquidity_ok'))} "
               f"(20日均成交额={fmt(holding_record.get('liquidity_myr'), 0)} MYR)")
+        if holding_df is not None:
+            holding_sweet = scan_sweet_spot(holding_df)
+            print(f"  今天是否『刚进入』Sweet Spot: {fmt(holding_sweet['just_entered'])} "
+                  f"(今天在区间内: {fmt(holding_sweet['in_sweet_spot'])}，昨天在区间内: {fmt(holding_sweet['prev_in_sweet_spot'])})")
 
     # ---------------- 保存到本地 ----------------
     out_dir = Path.home() / "Documents" / "PlanB_Scanner" / f"industry_tier_scan_{datetime.now().strftime('%Y%m%d_%H%M')}"
@@ -355,6 +364,7 @@ def main():
             },
             "watchlist_results": all_records,
             "holding": holding_record,
+            "sweet_spot_alerts": sweet_spot_alerts,
         }, f, ensure_ascii=False, indent=2, default=str)
 
     with open(out_dir / "tier_table.csv", "w", newline="", encoding="utf-8-sig") as f:
@@ -369,10 +379,19 @@ def main():
         for r in sweet_spot_hits:
             writer.writerow(build_row(r))
 
+    alert_headers = ["代码", "名称", "resonance", "red_ratio", "进入日期"]
+    with open(out_dir / "sweet_spot_alerts.csv", "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(alert_headers)
+        for a in sweet_spot_alerts:
+            entry_date = a["entry_date"].strftime("%Y-%m-%d") if a["entry_date"] is not None else "N/A"
+            writer.writerow([a["ticker"], a["name"], fmt(a["resonance"], 0), fmt(a["red_ratio"], 2), entry_date])
+
     print(f"\n✅ 结果已保存到: {out_dir}")
-    print("   - full_results.json  (全部原始字段，含持仓)")
-    print("   - tier_table.csv     (通过流动性过滤的 Tier 分类表)")
-    print("   - sweet_spot_hits.csv (完整 Sweet Spot 命中清单)")
+    print("   - full_results.json    (全部原始字段，含持仓 + 起飞信号)")
+    print("   - tier_table.csv       (通过流动性过滤的 Tier 分类表)")
+    print("   - sweet_spot_hits.csv  (完整 Sweet Spot 命中清单，含旧信号)")
+    print("   - sweet_spot_alerts.csv (今天『刚进入』sweet spot 的起飞信号，不含旧信号)")
 
 
 if __name__ == "__main__":

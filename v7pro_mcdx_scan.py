@@ -260,6 +260,119 @@ def detect_bearish_divergence(df: pd.DataFrame, lookback: int = DIVERGENCE_LOOKB
 
 
 # =====================================================
+# 6.5 Sweet Spot 起飞信号 (resonance + red_ratio 持久性)
+# =====================================================
+RED_RATIO_LOW, RED_RATIO_HIGH = 0.60, 0.85
+PERSIST_WINDOW_MONTHS = 18
+SWEET_SPOT_RESONANCE_MIN = DWM_BULL_TH  # 55，沿用第13节 mcdxDWM_Bull 的共振门槛
+MONTHLY_MIN_LEN = BANKER_PERIOD          # 50，月线至少要有一个合法 mcdx_score 读数
+
+
+def compute_resonance_score(d_tf, w_tf, m_tf):
+    """数值化共振分数：日/周/月三层 mcdx_score 取最小值。
+    resonance_text() 判断的是同一件事，但只回传文字/布尔；这里回传数值，
+    方便跟 red_ratio 一起做区间筛选。三层任一缺失 (数据不足) 回传 None。"""
+    if d_tf is None or w_tf is None or m_tf is None:
+        return None
+    return min(d_tf['mcdx_score'], w_tf['mcdx_score'], m_tf['mcdx_score'])
+
+
+def compute_monthly_persistence(daily_df: pd.DataFrame, window_months: int = PERSIST_WINDOW_MONTHS):
+    """月线庄家主导持续性：red_ratio / red_streak。
+    重采样为月线('ME')，用 calc_mcdx_series() 算出月线 dominant 序列，
+    取最近 window_months 个『有效』月份 (月线 banker RSI(BANKER_PERIOD) 暖机完成之后)：
+      red_ratio  = 这段窗口内 dominant==0（庄家主导）的占比
+      red_streak = 从窗口末尾往回数连续庄家主导的月数 (上限 window_months，不用全历史无上限版本)
+    历史不足 BANKER_PERIOD 个月线读数的新股 (暖机都还没完成)，回传 (None, None, 0)——
+    不当成0处理，避免新股被误判为『不在 sweet spot』。
+    回传: (red_ratio, red_streak, 实际使用的窗口月数)"""
+    monthly_df = resample_ohlcv(daily_df, 'ME')
+    total_months = len(monthly_df)
+
+    valid_count = max(0, total_months - (BANKER_PERIOD - 1))
+    if valid_count <= 0:
+        return None, None, 0
+
+    _, _, _, dominant, _ = calc_mcdx_series(monthly_df['Close'])
+    window_n = min(window_months, valid_count)
+    dom_window = dominant.tail(window_n)
+
+    red_ratio = float((dom_window == 0).mean())
+
+    streak = 0
+    for v in dom_window.iloc[::-1]:
+        if v == 0:
+            streak += 1
+        else:
+            break
+
+    return red_ratio, streak, window_n
+
+
+def is_sweet_spot(resonance, red_ratio) -> bool:
+    """走过 walk-forward 验证的 sweet spot 判定 (60天维度 ~62% 胜率，+3.76% 超额收益)：
+    resonance >= 55 且 red_ratio 落在 [0.60, 0.85]。"""
+    return bool(
+        resonance is not None and resonance >= SWEET_SPOT_RESONANCE_MIN
+        and red_ratio is not None and RED_RATIO_LOW <= red_ratio <= RED_RATIO_HIGH
+    )
+
+
+def _sweet_spot_state(daily_df: pd.DataFrame):
+    """给定『截止到某一天』的日线 df，算出当天的 resonance / red_ratio / 是否在 sweet spot。"""
+    min_len = max(BANKER_PERIOD, HOT_PERIOD) + 10
+    if len(daily_df) < min_len:
+        return {'date': None, 'resonance': None, 'red_ratio': None, 'red_streak': None, 'in_sweet_spot': False}
+
+    d_tf = analyze_timeframe_last(daily_df, min_len)
+    weekly_df = resample_ohlcv(daily_df, 'W')
+    w_tf = analyze_timeframe_last(weekly_df, min_len)
+    monthly_df = resample_ohlcv(daily_df, 'ME')
+    m_tf = analyze_timeframe_last(monthly_df, min_len=MONTHLY_MIN_LEN)
+
+    resonance = compute_resonance_score(d_tf, w_tf, m_tf)
+    red_ratio, red_streak, _ = compute_monthly_persistence(daily_df)
+
+    return {
+        'date': daily_df.index[-1],
+        'resonance': resonance,
+        'red_ratio': red_ratio,
+        'red_streak': red_streak,
+        'in_sweet_spot': is_sweet_spot(resonance, red_ratio),
+    }
+
+
+def scan_sweet_spot(df: pd.DataFrame) -> dict:
+    """判断一支股票『最新一天』是否满足 sweet spot (resonance>=55 且 red_ratio∈[0.60,0.85])，
+    以及是否为『刚进入』(前一天不满足、今天满足)——避免重复报已经在区间里很久的旧信号。
+
+    df: 该股票的日线 OHLCV DataFrame，格式跟 yf.download()/fetch_daily() 输出一致
+        (需要 Close/Volume 等原始列，未重采样)。
+
+    回传 dict:
+      date              最新一天日期
+      resonance         最新一天 resonance (日周月 mcdx_score 取最小值)
+      red_ratio         最新一天 red_ratio (近18个有效月线的庄家主导占比)
+      red_streak        最新一天 red_streak
+      in_sweet_spot     最新一天是否满足 sweet spot
+      prev_in_sweet_spot 前一天是否满足
+      just_entered      今天满足 且 前一天不满足 —— 『刚进入』信号
+    """
+    today = _sweet_spot_state(df)
+    prev = _sweet_spot_state(df.iloc[:-1]) if len(df) > 1 else {'in_sweet_spot': False}
+
+    return {
+        'date': today['date'],
+        'resonance': today['resonance'],
+        'red_ratio': today['red_ratio'],
+        'red_streak': today['red_streak'],
+        'in_sweet_spot': today['in_sweet_spot'],
+        'prev_in_sweet_spot': prev['in_sweet_spot'],
+        'just_entered': today['in_sweet_spot'] and not prev['in_sweet_spot'],
+    }
+
+
+# =====================================================
 # 6. 单一股票完整分析
 # =====================================================
 def analyze_stock(ticker: str):
