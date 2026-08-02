@@ -216,3 +216,30 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ===== PlanB Scanner 项目专属规则 =====
+
+# 扫描结果CSV(会不断产生新文件,不需要版本控制)
+unified_scan_*.csv
+*_signals.csv
+sweet_spot_log.csv
+monthly_double_attack_log.csv
+cmf_observation_log.csv
+valuation_results.csv
+
+# 备份文件
+*.bak
+*.backup
+*.backup2
+
+# 估值缓存目录(运行时生成,会频繁变化)
+valuation_cache/
+
+# 决策状态(运行时生成)
+decision_priority_state.json
+
+# 批量扫描输出目录
+industry_tier_scan_*/
+
+# macOS系统文件
+.DS_Store
