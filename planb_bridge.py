@@ -32,7 +32,7 @@ def compute_persistence(window, months=PERSIST_WINDOW_MONTHS):
         # 月线根数不足(<60根=5年),RSI(50)算不出来,不能拿0.0冒充"无庄家"
         return {"red_ratio": None, "red_streak": 0}
     _, _, _, dom_series, _ = v7.calc_mcdx_series(monthly['Close'])
-    dom_series = dom_series.dropna()
+    dom_series = dom_series[dom_series != -1]
     recent = dom_series.tail(months)
     if len(recent) == 0:
         return {"red_ratio": 0.0, "red_streak": 0}
