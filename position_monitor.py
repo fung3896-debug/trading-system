@@ -39,10 +39,11 @@ import planb_bridge as br
 # intrinsic_low: 内在价值下沿（庄家/满格型止盈锚；动能型可填 None）
 # nta: 每股净有形资产（庄家型基本面止损线；其他可填 None）
 POSITIONS = [
-    {'symbol': '5026.KL', 'name': 'MHC',      'type': 'banker',   'cost': 1.78,  'lots': None, 'intrinsic_low': 3.34, 'nta': 1.88},
+    {'symbol': '5026.KL', 'name': 'MHC',      'type': 'banker',   'cost': 1.78,  'lots': 6, 'intrinsic_low': 3.34, 'nta': 1.88},
     {'symbol': '7115.KL', 'name': 'SKBSHUT',  'type': 'momentum', 'cost': 0.929, 'lots': 8,    'intrinsic_low': 1.22, 'nta': None},
-    {'symbol': '7103.KL', 'name': 'Spritzer', 'type': 'topped',   'cost': 2.89,  'lots': 2,    'intrinsic_low': 3.34, 'nta': None},
+    {'symbol': '7103.KL', 'name': 'Spritzer', 'type': 'topped',   'cost': 2.89,  'lots': 1,    'intrinsic_low': 3.34, 'nta': None},
     {'symbol': '7233.KL', 'name': 'DUFU',     'type': 'momentum', 'cost': 2.467, 'lots': 1,    'intrinsic_low': None, 'nta': None},
+    {'symbol': '8907.KL', 'name': 'EG',       'type': 'banker',   'cost': 1.797, 'lots': 6,    'intrinsic_low': None, 'nta': None},
 ]
 
 # ============================================================
@@ -155,7 +156,7 @@ def analyze_position(pos):
         if red_ratio < RED_EXIT_BANKER:
             actions.append(('SELL', f'red_ratio跌破{RED_EXIT_BANKER}（现{red_ratio:.2f}）→ 庄家撤退'))
         if not month_banker:
-            actions.append(('SELL', '月线庄家主导消失 → 退出'))
+            actions.append(('SELL', '月线强势主导消失 → 退出'))
 
     elif pos['type'] == 'momentum':
         if below_vwap and vol_ratio > 1.5:
@@ -203,7 +204,7 @@ def main():
         print(f"{pos['name']:<10}({pos['symbol']})  {type_cn[pos['type']]}  止盈:{tp_rule[pos['type']]}   "
               f"成本 {pos['cost']}  现价 {r['price']:.3f}  盈亏 {r['pnl_pct']:+.1f}%")
         print(f"  {'':2}共振 {r['resonance']:.0f}  red_ratio {r['red_ratio']:.2f}({r['red_streak']}月)  "
-              f"量比 {r['vol_ratio']:.2f}  月线庄家 {'是' if r['month_banker'] else '否'}  "
+              f"量比 {r['vol_ratio']:.2f}  月线强势 {'是' if r['month_banker'] else '否'}  "
               f"硬止损价 {r['stop_price']:.3f}")
         cw = f"{r['cmf_weekly']:+.2f}" if r['cmf_weekly'] is not None else 'N/A'
         cm = f"{r['cmf_monthly']:+.2f}" if r['cmf_monthly'] is not None else 'N/A'
