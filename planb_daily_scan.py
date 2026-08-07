@@ -173,7 +173,7 @@ print("\n提醒:0.85 是警戒线不是铁律,超过就缩仓提高警惕,别机
 # ===== 样外验证日记:自动记录甜蜜点信号 =====
 import csv, os
 from datetime import datetime
-LOG = os.path.expanduser('~/Documents/PlanB_Scanner/sweet_spot_log.csv')
+LOG = 'sweet_spot_log.csv'
 if buy_list:
     new_file = not os.path.exists(LOG)
     with open(LOG, 'a', newline='') as f:      # 'a' = 追加,不覆盖
