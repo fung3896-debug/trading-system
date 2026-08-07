@@ -16,6 +16,7 @@ import requests
 CSV_PATH = "sweet_spot_log.csv"
 TABLE = "sweet_spot_signals"
 
+# CSV表头 -> Supabase字段名 映射
 COLUMN_MAP = {
     "记录日":   "scan_date",
     "股票":     "ticker",
@@ -27,6 +28,7 @@ COLUMN_MAP = {
 
 
 def parse_date(raw):
+    """尝试常见日期格式，统一转成 YYYY-MM-DD。失败则原样返回，让Postgres报错更容易定位问题。"""
     raw = raw.strip()
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%m/%d/%Y"):
         try:
@@ -45,8 +47,12 @@ def main():
         sys.exit(1)
 
     if not os.path.exists(CSV_PATH):
-        print(f"[错误] 找不到 {CSV_PATH}，跳过上传")
-        sys.exit(1)
+        # 当前 v7pro_mcdx_scan.py 只打印结果到屏幕，不写这个CSV文件；
+        # sweet_spot_log.csv 由另一个尚未接入本自动化流程的脚本生成。
+        # 这里先正常退出（不算失败），等确认是哪个脚本负责生成CSV后，
+        # 把那一步也加进 daily_scan.yml，这个分支就不会再被触发。
+        print(f"[信息] 找不到 {CSV_PATH}（这一步尚未接入生成CSV的脚本），本次跳过上传，不视为失败")
+        return
 
     rows = []
     with open(CSV_PATH, newline="", encoding="utf-8") as f:
@@ -63,7 +69,7 @@ def main():
                 if db_col == "scan_date":
                     value = parse_date(value)
                 elif db_col == "ticker":
-                    pass
+                    pass  # 保留原样
                 elif value == "":
                     value = None
                 record[db_col] = value
@@ -78,10 +84,12 @@ def main():
         "apikey": supabase_key,
         "Authorization": f"Bearer {supabase_key}",
         "Content-Type": "application/json",
+        # on_conflict 配合表里的 unique(scan_date, ticker)，重复记录会被更新而不是报错
         "Prefer": "resolution=merge-duplicates,return=minimal",
     }
     params = {"on_conflict": "scan_date,ticker"}
 
+    # 分批上传，避免一次性请求过大
     batch_size = 200
     total = len(rows)
     for i in range(0, total, batch_size):
