@@ -14,6 +14,7 @@ jobs:
           python-version: '3.10'
       - run: pip install -r requirements.txt
       - run: python v7pro_mcdx_scan.py
+      - run: python planb_daily_scan.py
       - run: python upload_to_supabase.py
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
