@@ -39,7 +39,7 @@ import planb_bridge as br
 # intrinsic_low: 内在价值下沿（庄家/满格型止盈锚；动能型可填 None）
 # nta: 每股净有形资产（庄家型基本面止损线；其他可填 None）
 POSITIONS = [
-    {'symbol': '5026.KL', 'name': 'MHC',      'type': 'banker',   'cost': 1.78,  'lots': 6, 'intrinsic_low': 3.34, 'nta': 1.88},
+    {'symbol': '5026.KL', 'name': 'MHC',      'type': 'banker',   'cost': 1.85,  'lots': 6,    'intrinsic_low': 3.34, 'nta': 1.88},
     {'symbol': '7115.KL', 'name': 'SKBSHUT',  'type': 'momentum', 'cost': 0.929, 'lots': 8,    'intrinsic_low': 1.22, 'nta': None},
     {'symbol': '7103.KL', 'name': 'Spritzer', 'type': 'topped',   'cost': 2.89,  'lots': 1,    'intrinsic_low': 3.34, 'nta': None},
     {'symbol': '7233.KL', 'name': 'DUFU',     'type': 'momentum', 'cost': 2.467, 'lots': 1,    'intrinsic_low': None, 'nta': None},
