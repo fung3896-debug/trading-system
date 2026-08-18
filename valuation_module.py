@@ -121,6 +121,7 @@ MANUAL_OVERRIDES = {
         # 待翻閱完整年報PDF現金流量表後補上。
         "net_income": 25_853_000,
         "shares_out": 160_977_584,
+        "eps": 0.1606,  # 基本EPS 16.06仙，同上季報來源；此前漏填導致 Graham 公式仍用 yfinance 的失真 EPS
     },
 }
 
