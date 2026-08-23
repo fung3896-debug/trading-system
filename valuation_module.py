@@ -113,6 +113,45 @@ MANUAL_OVERRIDES = {
 }
 
 
+def check_consistency(eps, shares_out, net_income, capex, dep_amort, tolerance=0.25):
+    """
+    数据一致性校验,返回问题列表(空列表代表无问题)
+
+    设计说明(2026-08-02修订):
+    - 原方案用 eps(trailingEps,TTM口径) × shares_out(当前时点股数)
+      直接对比 net_income(固定财年口径),对成长型公司/近期有增发的公司
+      会产生系统性误报(如SKBSHUT案例,偏差43.2%但并非数据错误)
+    - 新方案改为: 用 net_income/shares_out 反推隐含EPS,
+      与yfinance的trailingEps做量级合理性比较(而非硬性口径匹配)
+      即使两者时间窗口不同,只要不是离谱倍数差距就不报警
+    - tolerance从5%放宽到25%,减少口径差异导致的假警报
+
+    注意: yfinance的capex是负值(现金流出), dep_amort是正值
+    """
+    issues = []
+
+    if eps is not None and shares_out is not None and net_income and shares_out > 0:
+        implied_eps = net_income / shares_out
+        if abs(eps) > 1e-9:  # 避免除以接近0的eps
+            deviation = abs(implied_eps - eps) / abs(eps)
+            if deviation > tolerance:
+                issues.append(
+                    f"隐含EPS(net_income/shares_out)={implied_eps:.4f} vs "
+                    f"yfinance trailingEps={eps:.4f}, 偏差{deviation*100:.1f}% "
+                    f"(可能为TTM与财年口径差异,或增发导致股数变动,建议人工核实)"
+                )
+
+    if capex is not None and dep_amort is not None:
+        capex_abs = abs(capex)
+        if capex_abs < dep_amort:
+            issues.append(
+                f"|capex|({capex_abs:,.0f}) < D&A({dep_amort:,.0f}), "
+                f"可能资产老化未更新或数据有误"
+            )
+
+    return issues
+
+
 def fetch_financials(ticker):
     """
     抓取單一股票的財務數據 (優先用快取)
@@ -164,6 +203,17 @@ def fetch_financials(ticker):
             overrides = MANUAL_OVERRIDES[ticker]
             data.update(overrides)
             print(f"  [覆蓋] {ticker} 套用官方年報核對數字: {list(overrides.keys())}")
+
+        # 一致性校验 (放在override之后,检查最终确认要用的数字)
+        issues = check_consistency(
+            data["eps"], data["shares_out"], data["net_income"],
+            data["capex"], data["dep_amort"]
+        )
+        data["consistency_issues"] = issues
+        if issues:
+            print(f"  ⚠️ [數據警告] {ticker}:")
+            for issue in issues:
+                print(f"     {issue}")
 
         _save_cache(ticker, data)
         _polite_delay()
@@ -353,6 +403,18 @@ if __name__ == "__main__":
         # 商品週期股不可外推單年爆發數字 -> 用8%保守估計
         "5026.KL": 8,    # MHC Plantations
         # 在這裡加入其他股票及其增長率假設
+        # SWKPLNT: FY2025 FFB+6%(Q4单季+27%,加速中),年轻树龄进入高产期(与MHC老化树龄相反)
+        # 分析师预期2026双位数增长，但现价4.38已超共识目标价约3.3，需查证是否透支
+        # -> 暂用10%(参考Spritzer同类逻辑)，待查NCI和实际财报数字后可能上调
+        "5135.KL": 10,   # SWKPLNT
+        # KERJAYA: 建筑股,MCDX持续双强15/18个月(非新建仓,是持续强势老将)
+        # 但股价3年涨幅35%/年已跑赢EPS增长25%/年,P/E17.5倍偏高
+        # 分析师自己预测营收仅+7.5~8.9%/年,远低于建筑业平均13-16%
+        "7161.KL": 8,   # KERJAYA
+        # KFIMA: 多元控股(种植+仓储+食品+制造),MCDX持续双强16/18个月(仅次于KERJAYA)
+        # PE6.05倍、股息率3.42%,capex(7651万)>折旧(6161万),资本开支健康非吃老本
+        # 论坛提及年轻棕榈树进入盛产期，但需年报进一步核实，暂保守估计
+        "6491.KL": 8,   # KFIMA
     }
 
     print("開始估值分析 (含快取 + 隨機延遲防封鎖機制)")
