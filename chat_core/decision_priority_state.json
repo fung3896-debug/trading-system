@@ -1,0 +1,47 @@
+{
+  "5026.KL": {
+    "last_action": "HOLD",
+    "days_active": 10,
+    "last_seen": "2026-08-18"
+  },
+  "7115.KL": {
+    "last_action": "HOLD",
+    "days_active": 10,
+    "last_seen": "2026-08-18"
+  },
+  "7103.KL": {
+    "last_action": "HALF",
+    "days_active": 8,
+    "last_seen": "2026-08-07"
+  },
+  "7233.KL": {
+    "last_action": "HOLD",
+    "days_active": 9,
+    "last_seen": "2026-08-07"
+  },
+  "8907.KL": {
+    "last_action": "HOLD",
+    "days_active": 3,
+    "last_seen": "2026-08-18"
+  },
+  "1066.KL": {
+    "last_action": "HOLD",
+    "days_active": 2,
+    "last_seen": "2026-08-18"
+  },
+  "1015.KL": {
+    "last_action": "HOLD",
+    "days_active": 2,
+    "last_seen": "2026-08-18"
+  },
+  "6491.KL": {
+    "last_action": "HOLD",
+    "days_active": 2,
+    "last_seen": "2026-08-18"
+  },
+  "7161.KL": {
+    "last_action": "HOLD",
+    "days_active": 2,
+    "last_seen": "2026-08-18"
+  }
+}

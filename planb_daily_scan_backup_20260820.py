@@ -1,15 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 planb_daily_scan.py —— 改进版 Plan B 日常扫描
-用回测验证过的规则:日周月共振(>=55) + 强势持续度甜蜜点(0.60~0.85)
-
-2026-08-20更新:文字措辞对齐"PlanB回测与估值参数"文档第四节的修正解读——
-red_ratio(甜蜜点区间的判断依据)不是「庄家持仓/建仓/出货比例」,而是
-「过去18个月中RSI50与RSI40同时超阈值的月份占比 ≈ 长期强势持续度」。
-不引入「庄家建仓/出货」这套叙事,规则本身照样成立,只是措辞改了,
-计算逻辑(br.compute_resonance_score / br.compute_persistence)完全没动。
-CSV欄位名(sweet_spot_log.csv / monthly_double_attack_log.csv)维持不变,
-避免破坏已累积的样外验证记录。
+用回测验证过的规则:日周月共振(>=55) + 庄家持续性甜蜜点(0.60~0.85)
 """
 import warnings
 warnings.filterwarnings('ignore')
@@ -88,9 +80,9 @@ def check_monthly_double_attack(df):
     double = bool(is_strong.iloc[-1] and is_strong.iloc[-2])
     return double, float(score.iloc[-1])
 
-# 甜蜜点(回测验证:0.60-0.85 表现最好,持续过久反而差)
+# 甜蜜点(回测验证:0.60-0.85 表现最好,满仓1.00反而差)
 RED_LOW, RED_HIGH = 0.60, 0.85
-WARN_HIGH = 0.85   # 超过此值 = 强势已到极端区,历史上表现最弱
+WARN_HIGH = 0.85   # 超过此值 = 提高警惕(可能出货期)
 
 TICKERS = ['7233.KL', '5211.KL', '8907.KL', '6459.KL', '5249.KL', '5026.KL',
            '5286.KL', '0225.KL', '0099.KL', '5031.KL', '5681.KL', '7163.KL',
@@ -105,7 +97,7 @@ def clean(df):
 
 
 print("="*95)
-print("📊 改进版 Plan B 日常扫描  |  共振>=55 + 强势持续度甜蜜点(0.60~0.85)")
+print("📊 改进版 Plan B 日常扫描  |  共振>=55 + 庄家持续性甜蜜点(0.60~0.85)")
 print("="*95)
 
 buy_list, watch_list = [], []
@@ -132,7 +124,7 @@ for tk in TICKERS:
             tag = "🟢 甜蜜点买入"
             buy_list.append((tk, res, rr, pers['red_streak']))
         elif resonance_ok and rr > WARN_HIGH:
-            tag = "🟡 共振但满仓(强势已到极端区)"
+            tag = "🟡 共振但满仓(警惕出货)"
             watch_list.append((tk, res, rr, pers['red_streak']))
         elif resonance_ok and rr < RED_LOW:
             tag = "⚪ 共振但持续性不足"
@@ -142,7 +134,7 @@ for tk in TICKERS:
         double_attack, dwm_score = check_monthly_double_attack(df)
         da_tag = "🔥双满共振" if double_attack else ""
 
-        print(f"{tk:<10} 共振:{res:>6.1f}  强势持续度:{rr:>5.2f}  连续:{pers['red_streak']:>2}月  {tag}  {da_tag}")
+        print(f"{tk:<10} 共振:{res:>6.1f}  红色占比:{rr:>5.2f}  连续红:{pers['red_streak']:>2}月  {tag}  {da_tag}")
 
         try:
             import csv, os
@@ -167,17 +159,16 @@ print(f"🟢 甜蜜点买入清单({len(buy_list)} 支)—— 回测胜率63.6%,
 print("="*95)
 if buy_list:
     for tk, res, rr, streak in sorted(buy_list, key=lambda x: -x[1]):
-        print(f"  {tk:<10} 共振{res:.0f}  强势持续度{rr:.2f}  连续{streak}月")
+        print(f"  {tk:<10} 共振{res:.0f}  红色占比{rr:.2f}  连续红{streak}月")
 else:
     print("  今天没有股票落在甜蜜点。宁缺勿滥。")
 
 if watch_list:
-    print(f"\n🟡 满仓警惕清单({len(watch_list)} 支)—— 共振够但已到极端强势区,历史上表现最弱")
+    print(f"\n🟡 满仓警惕清单({len(watch_list)} 支)—— 共振够但庄家可能在出货,别追")
     for tk, res, rr, streak in watch_list:
-        print(f"  {tk:<10} 共振{res:.0f}  强势持续度{rr:.2f}(>0.85)")
+        print(f"  {tk:<10} 共振{res:.0f}  红色占比{rr:.2f}(>0.85)")
 
-print("\n提醒:强势持续度不是庄家持仓比例,是RSI50/RSI40同时超阈值的月份占比。")
-print("      0.85 是警戒线不是铁律,超过就缩仓提高警惕,别机械一刀切。")
+print("\n提醒:0.85 是警戒线不是铁律,超过就缩仓提高警惕,别机械一刀切。")
 
 # ===== 样外验证日记:自动记录甜蜜点信号 =====
 import csv, os
