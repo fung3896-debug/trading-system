@@ -17,6 +17,9 @@ Fernando Smart Money Radar | 真实数据 + MCDX (完整对齐 Pine V7 Pro Recov
   3. 保留原本的 MCDX / MACD / 成交量 三层加权总分系统 (对齐 f_mtf_total_score)。
   4. 风险栏输出，比照 Pine 状态表第16行的判断优先级：
          danger > bearishDivergence > distributeRisk(近似) > 正常
+  5. 【本次修正 2026-08-18】真庄家 Top 5 打印时 banker_d/banker_w/banker_m 可能为 None
+     (上市时间短的股票如 ARM/NVCT 週期数据不足时) 直接用 :.1f 格式化会导致
+     TypeError 崩溃、GitHub Actions 每日扫描整体失败。改用安全格式化，None 时显示 "N/A"。
 
 未对齐项目 (下次再补，见对话说明)：
   - RCI (f_rci) 排名相关系数，本版尚未实作
@@ -411,8 +414,11 @@ def scan_market(market_name: str, emoji: str, tickers: list):
     )
     print(f"\n🏦 {market_name} 真庄家 Top 5 (按 banker 原始值加权排序，日20%/周35%/月45%，剔除游资分数干扰)")
     for r in banker_ranked[:5]:
+        d_str = f"{r['banker_d']:.1f}" if r['banker_d'] is not None else "N/A"
+        w_str = f"{r['banker_w']:.1f}" if r['banker_w'] is not None else "N/A"
+        m_str = f"{r['banker_m']:.1f}" if r['banker_m'] is not None else "N/A"
         print(f"{r['ticker']:<10} ${r['price']:>9.2f}  庄家强度:{r['banker_strength']:>5.1f}/20  "
-              f"D/W/M banker: {r['banker_d']:.1f}/{r['banker_w']:.1f}/{r['banker_m']:.1f}  "
+              f"D/W/M banker: {d_str}/{w_str}/{m_str}  "
               f"主导:{r['dominant_dwm']}  MCDX总分:{r['dwm_total']:.1f}")
 
     return results

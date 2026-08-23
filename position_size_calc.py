@@ -32,6 +32,7 @@ def calc_position_size(capital: float,
     if archetype not in ("banker", "full", "momentum"):
         raise ValueError("archetype 必须是 banker / full / momentum")
 
+    # 12% 硬止损是所有类型的通用天花板
     hard_stop = entry * 0.88
 
     stop_loss = hard_stop
@@ -41,6 +42,7 @@ def calc_position_size(capital: float,
         if nta is None:
             raise ValueError("庄家型必须提供 NTA (每股净有形资产)")
         nta_stop = nta * 0.95
+        # 取离现价更近（更保守）的那个作为实际止损价
         stop_loss = max(hard_stop, nta_stop)
 
     max_loss_amount = capital * risk_pct
