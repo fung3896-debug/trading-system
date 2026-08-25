@@ -185,15 +185,32 @@ from datetime import datetime
 LOG = 'sweet_spot_log.csv'
 if buy_list:
     new_file = not os.path.exists(LOG)
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    # 去重检查: 读取今天已经写过哪些股票, 避免重复append
+    already_logged_today = set()
+    if not new_file:
+        with open(LOG, 'r', newline='') as f:
+            reader = csv.reader(f)
+            next(reader, None)  # 跳过表头
+            for row in reader:
+                if len(row) >= 2 and row[0] == today:
+                    already_logged_today.add(row[1])
+
     with open(LOG, 'a', newline='') as f:      # 'a' = 追加,不覆盖
         w = csv.writer(f)
         if new_file:
             w.writerow(['记录日', '股票', '共振', 'red_ratio', '连续红月', '当日收盘'])
-        today = datetime.now().strftime('%Y-%m-%d')
+        written_count = 0
+        skipped_count = 0
         for tk, res, rr, streak in buy_list:
+            if tk in already_logged_today:
+                skipped_count += 1
+                continue
             try:
                 px = float(clean(yf.download(tk, period='5d', progress=False))['Close'].iloc[-1])
             except Exception:
                 px = ''
             w.writerow([today, tk, round(res, 1), round(rr, 3), streak, px])
-    print(f"\n📝 已记入样外日记: {LOG}")
+            written_count += 1
+    print(f"\n📝 已记入样外日记: {LOG} (新增{written_count}笔, 今天已存在跳过{skipped_count}笔)")
