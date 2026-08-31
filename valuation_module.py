@@ -11,8 +11,8 @@ Plan B 估值模組 (valuation_module.py)
 4. 內建防封鎖機制：本地快取 + 隨機延遲 + 分批處理
 
 用法：
-    python valuation_module.py
-    (可在 STOCK_LIST 修改要分析的股票)
+    python valuation_module.py                  # 跑內建的 GROWTH_ASSUMPTIONS 全部股票
+    python valuation_module.py 8907.KL 1066.KL   # 只跑指定股票(用預設8%增長率,除非清單裡有自訂值)
 
 依賴：
     pip install yfinance pandas --break-system-packages
@@ -24,6 +24,7 @@ import time
 import random
 import json
 import os
+import sys
 from datetime import datetime, timedelta
 
 # ------------------------------------------------------------------
@@ -123,8 +124,41 @@ MANUAL_OVERRIDES = {
         "shares_out": 160_977_584,
         "eps": 0.1606,  # 基本EPS 16.06仙，同上季報來源；此前漏填導致 Graham 公式仍用 yfinance 的失真 EPS
     },
+    "8907.KL": {
+        # 來源: EG Industries Berhad Annual Report 2025 (年結至2025年6月30日), www.eg.com.my
+        # Group Financial Highlights (第5頁): 母公司股東應占淨利 RM84.06M
+        # Capital Expenditure (第9頁): FY2025投資RM122.7M
+        # D&A = EBITDA(170.10M) - PBT(80.40M) = 89.7M
+        "net_income": 84_060_000,
+        "capex": -122_700_000,
+        "dep_amort": 89_700_000,
+    },
+    "0217.KL": {
+        # 來源: The Edge Malaysia 2026-07-23 報道 + 官方公告，非yfinance自動抓取
+        # (yfinance trailingEps字段異常，算出P/E僅0.38倍不合理，已手動核實替換)
+        # FY2026(截至2026年3月31日)淨利RM24.07M，同比+28%(去年RM18.77M)
+        # 營收RM159M，同比+15.6%
+        "net_income": 24_070_000,
+        "eps": 0.0415,  # net_income / shares_out 反推
+    },
+    # MHC(5026.KL) NCI校正尚未補上 —— 待你從年報找到少數股東權益占比或
+    # 母公司股東應占FCF數字後，在這裡加一條override
+    "5026.KL": {
+        # 來源: MHC Plantations Bhd Annual Report 2025 (FY2025, 年結2025年12月31日)
+        # Five-Year Financial Highlights: 母公司股東應占淨利 RM48,424千(官方直接披露,非估算)
+        # NCI(少數股東權益)RM303,006千 / 總權益RM671,424千 ≈ 45.1%
+        # 主因: MHC僅直接持股Cepatwawasan Group Berhad(CGB)39.53%,但透過控制權協議
+        # (可變回報權)100%並表CGB,導致合併net_income/FCF虛高,除以母公司股數
+        # 會系統性高估估值(方案A: 僅修正net_income,DCF仍用yfinance原始FCF未修正)
+        "net_income": 48_424_000,
+    },
 }
 
+# 少数股东权益(NCI)比例修正 —— 用于并表但非100%持股的公司,避免合并FCF/DCF虚高
+# 比例来源: 官方年报"Non-controlling interest / 总权益",非精确的现金流拆分数字
+NCI_RATIOS = {
+    "5026.KL": 0.451,  # MHC: NCI权益303,006千 / 总权益671,424千 (Annual Report 2025)
+}
 
 def check_consistency(eps, shares_out, net_income, capex, dep_amort, tolerance=0.25):
     """
@@ -199,6 +233,10 @@ def fetch_financials(ticker):
                 fcf_row = op_cf + capex  # capex 通常是負值
             else:
                 fcf_row = None
+
+        # 套用NCI(少數股東權益)比例修正,避免合併FCF虛高
+        if ticker in NCI_RATIOS and fcf_row is not None:
+            fcf_row = fcf_row * (1 - NCI_RATIOS[ticker])
 
         data = {
             "ticker": ticker,
@@ -419,7 +457,6 @@ if __name__ == "__main__":
         # 但過去一年股本增發38%(認股權證行使), EPS 3年年化增速76% 明顯低於淨利增速133%, 稀釋持續侵蝕
         # 增長動能強但稀釋顯著 -> 用12%(比淨利增速大幅打折, 貼近EPS實際增速)
         "7115.KL": 12,   # SKB Shutters
-        # 在這裡加入其他股票及其增長率假設
         # SWKPLNT: FY2025 FFB+6%(Q4单季+27%,加速中),年轻树龄进入高产期(与MHC老化树龄相反)
         # 分析师预期2026双位数增长，但现价4.38已超共识目标价约3.3，需查证是否透支
         # -> 暂用10%(参考Spritzer同类逻辑)，待查NCI和实际财报数字后可能上调
@@ -432,7 +469,20 @@ if __name__ == "__main__":
         # PE6.05倍、股息率3.42%,capex(7651万)>折旧(6161万),资本开支健康非吃老本
         # 论坛提及年轻棕榈树进入盛产期，但需年报进一步核实，暂保守估计
         "6491.KL": 8,   # KFIMA
+        # Powerwell: 电力配电设备制造商,MCDX持续双强14/18个月(2026年4月起连续5个月稳定)
+        # FY2026净利+28%,营收+15.6%,真实P/E约24倍(yfinance字段异常已手动核实修正)
+        # 分析师预测47%增长偏乐观,用15%(高于历史13%,低于分析师预测和行业21%)
+        "0217.KL": 15,   # POWERWELL
+        # 在這裡加入其他股票及其增長率假設
     }
+
+    # 命令行傳參數時,只跑指定股票(清單裡有自訂增長率的沿用,沒有的用預設8%)
+    if len(sys.argv) > 1:
+        cli_tickers = sys.argv[1:]
+        DEFAULT_GROWTH = 8
+        GROWTH_ASSUMPTIONS = {
+            t: GROWTH_ASSUMPTIONS.get(t, DEFAULT_GROWTH) for t in cli_tickers
+        }
 
     print("開始估值分析 (含快取 + 隨機延遲防封鎖機制)")
     print(f"快取有效期: {CACHE_EXPIRY_DAYS} 天 | 折現率: {DISCOUNT_RATE*100}%")
@@ -449,3 +499,5 @@ if __name__ == "__main__":
     output_path = "./valuation_results.csv"
     df.to_csv(output_path, index=False, encoding="utf-8-sig")
     print(f"\n結果已儲存至: {output_path}")
+
+# EG Industries 追加 (已在上面MANUAL_OVERRIDES里)
