@@ -124,6 +124,18 @@ MANUAL_OVERRIDES = {
         "shares_out": 160_977_584,
         "eps": 0.1606,  # 基本EPS 16.06仙，同上季報來源；此前漏填導致 Graham 公式仍用 yfinance 的失真 EPS
     },
+    "7249.KL": {
+        # 來源: SkyGate Solutions Berhad, Annual Report 2025 (FYE 31 Dec 2025)
+        # Financial Highlights (p.45): Revenue RM89.998M, PBT RM4.637M
+        # Profit/(Loss) After Taxation (集團整體) RM(96)千 -> 集團層面實為虧損
+        # Profit Attributable to Shareholders RM3.378M, EPS 1.04仙 (即本欄位採用值)
+        # 分部虧損提醒: 製造業務(佔營收77%) FY2025仍虧損RM1.03M(FY2024虧RM1.88M);
+        # 獲利主要來自產業發展分部(RM2.29M)及租賃收入,非核心製造業務改善
+        # 注: capex/dep_amort 尚未核對到現金流量表明細(財報附註62-142頁未能完整讀取),
+        # 暫時沿用 yfinance 抓到的值 (可能不準確),待補上。
+        "net_income": 3_378_000,
+        "eps": 0.0104,  # 基本EPS 1.04仙,歸屬股東淨利/加權平均股數
+    },
     "8907.KL": {
         # 來源: EG Industries Berhad Annual Report 2025 (年結至2025年6月30日), www.eg.com.my
         # Group Financial Highlights (第5頁): 母公司股東應占淨利 RM84.06M
