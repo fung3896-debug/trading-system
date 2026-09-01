@@ -10,6 +10,11 @@ all_klse_sweetspot.py — 全马股甜蜜点扫描（重建版，2026-09-01）
   2. 共振与持续性一律走 chat_core/planb_bridge.py，跟 planb_daily_scan
      用同一套逻辑，不再各自实作。
   3. 批次下载取代逐支下载（794支/414秒 已实测）。
+  4. persistence 用 exclude_incomplete=True（排除未走完的当月柱）。
+     注意：planb_daily_scan.py 仍用旧口径(False)以保护 sweet_spot_log.csv
+     的连续记录，所以两支扫描器对同一支股票的 red_ratio 可能差 1/18
+     (≈0.056)，0.85 边缘的股票可能一边进甜蜜点、一边进满仓警惕。
+     这是刻意的取舍，不是 bug。要全面统一口径必须重跑所有回测。
 
 规则（沿用 511 信号回测口径）：
     甜蜜点   resonance >= 55 且 0.60 <= red_ratio <= 0.85
@@ -62,7 +67,7 @@ def analyse_one(ticker, df):
     resonance = compute_resonance_score(df)
     if resonance is None or resonance <= -999.0:
         return None
-    pers = compute_persistence(df)
+    pers = compute_persistence(df, exclude_incomplete=True)
     red_ratio = pers.get("red_ratio")
     if red_ratio is None:          # 根数不足，不能拿 0.0 冒充"无庄家"
         return None
