@@ -281,6 +281,12 @@ def fetch_financials(ticker):
         }
 
         # 套用手動核對過的數據 (優先於 yfinance 抓到的數字)
+        # 注意: override capex/dep_amort 不會自動更新 fcf_latest！
+        # DCF 用的是獨立快取的 fcf_latest,不是從 capex/dep_amort 現場算出來的
+        # (只有 Owner Earnings 是現場算 net_income+dep_amort-capex)。
+        # 若要讓 DCF 也反映核實過的 capex,必須同時在 override 裡手動填 fcf_latest
+        # (通常 = 營運現金流 - capex)，否則 DCF 仍靜默沿用 yfinance 原始數字。
+        # 血淚教訓見 6742.KL(YTL Power) 2026-09-02 的修正過程。
         if ticker in MANUAL_OVERRIDES:
             overrides = MANUAL_OVERRIDES[ticker]
             data.update(overrides)
