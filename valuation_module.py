@@ -136,6 +136,25 @@ MANUAL_OVERRIDES = {
         "net_income": 3_378_000,
         "eps": 0.0104,  # 基本EPS 1.04仙,歸屬股東淨利/加權平均股數
     },
+    "6742.KL": {
+        # 來源: YTL Power International Berhad Annual Report 2025 (已審計,FYE 30.6.2025)
+        # Financial Highlights: Revenue RM21,801.8M, PBT RM3,310.4M
+        # Profit After Tax(集團) RM2,671.8M; Profit Attributable to Owners RM2,545.4M
+        # Basic EPS 30.96仙; 每股淨資產 RM2.53; 股息8.0仙(連續28年派息)
+        # 現金流量表核實(p.166-167,已審計版):
+        #   Purchase of PPE = -RM6,231,390千
+        #   D&A合計 = RM1,928,424千 (PPE折舊1,206,192+使用權資產180,653+
+        #     無形資產攤銷111,811+特許權資產攤銷429,768)
+        #   營運現金流 RM4,240,917千,扣capex後仍為負,缺口靠新增借款
+        #   RM9,761,636千補上,淨負債由23,553.8M增至25,742.0M。
+        #   證實DCF/OE負值反映真實重資本投資期(Bristol地產、Johor數據中心、
+        #   新加坡氫能電廠),非數據錯誤。
+        "net_income": 2_545_449_000,
+        "eps": 0.3096,
+        "capex": -6_231_390_000,
+        "dep_amort": 1_928_424_000,
+        "fcf_latest": 4_240_917_000 - 6_231_390_000,  # 營運現金流-capex,取代yfinance原始值
+    },
     "8907.KL": {
         # 來源: EG Industries Berhad Annual Report 2025 (年結至2025年6月30日), www.eg.com.my
         # Group Financial Highlights (第5頁): 母公司股東應占淨利 RM84.06M
