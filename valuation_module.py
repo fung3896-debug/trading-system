@@ -111,6 +111,23 @@ MANUAL_OVERRIDES = {
         "net_income": 394_246_000,
         "dep_amort": 28_142_000,
     },
+    "9059.KL": {
+        # 來源: TSH Resources Berhad Annual Report FY2025 (年結至2025年12月31日)
+        # 用戶拍照提供年報 Directors' Report + Statements of Cash Flows (Group) 頁面，人工核實
+        # 母公司股東應占淨利 183,369千 (集團含少數股東權益總利潤 222,932千，本模型不使用該數字)
+        # D&A(經營活動現金流調整項): PPE折舊90,655千 + 使用權資產折舊9,624千 + 生物資產折舊1,181千 = 101,460千
+        #   (年報片段未見無形資產攤銷單獨列項，種植園企業通常金額不大/不適用，未列入不影響結論)
+        # Capex(投資活動現金流): 購置PPE 71,176千 + 新種植支出(Forest planting expenditure) 1,339千 = 72,515千
+        #   (若計入使用權資產新增8,225千則為80,740千；因ROU新增偏融資性質，是否計入capex有爭議，
+        #    暫用窄口徑72,515千。敏感度測試: 兩種口徑下三模型結論皆為"低估"，不影響最終判斷)
+        # 校正依據: yfinance "Capital Expenditure"欄位(-8,853萬)與"Capital Expenditure Reported"欄位
+        #   (-134萬)相差66倍。核實後確認"Capital Expenditure Reported"僅對應Forest planting expenditure
+        #   一項(-133.9萬，幾乎精確匹配)，並非完整capex；"Capital Expenditure"欄位數量級接近真實值但仍
+        #   偏高約9-22%(取決於是否含ROU)，較"Reported"欄位可信但非精確數字。
+        "capex": -72_515_000,
+        "net_income": 183_369_000,
+        "dep_amort": 101_460_000,
+    },
     "7115.KL": {
         # 來源: SKB Shutters Corporation Berhad, Quarterly rpt for financial period ended 30 Jun 2025
         # (Bursa announcement, 28 Aug 2025, Reference FRA-28082025-00032)
