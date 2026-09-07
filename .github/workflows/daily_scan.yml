@@ -15,7 +15,8 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Resolve symlinks
         run: cp -L planb_bridge.py planb_bridge.py.tmp && mv planb_bridge.py.tmp planb_bridge.py
-      - run: python v7pro_mcdx_scan.py      - run: python planb_daily_scan.py
+      - run: python v7pro_mcdx_scan.py
+      - run: python planb_daily_scan.py
       - run: python upload_to_supabase.py
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
