@@ -118,8 +118,31 @@ def load_existing():
         return set()
 
 
+def clean_tickers(args):
+    """过滤掉 #注释行、空串，去重并保序"""
+    out, seen_t = [], set()
+    for a in args:
+        a = a.strip()
+        if not a or a.startswith("#"):
+            continue
+        if a not in seen_t:
+            seen_t.add(a)
+            out.append(a)
+    return out
+
+
 def main():
-    tickers = sys.argv[1:] if len(sys.argv) > 1 else WATCHLIST
+    args = sys.argv[1:]
+    if args and args[0] == "--all":
+        from bursa_universe import ALL_TICKERS, KNOWN_BAD_TICKERS
+        tickers = [t for t in ALL_TICKERS if t not in KNOWN_BAD_TICKERS]
+        source = "bursa_all"
+    elif args:
+        tickers = clean_tickers(args)
+        source = os.environ.get("CRSI_SOURCE", "adhoc")
+    else:
+        tickers = WATCHLIST
+        source = "watchlist"
     seen = load_existing()
     run_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     rows = []
@@ -180,6 +203,7 @@ def main():
             "crsi_prev1": round(float(prev1), 4),
             "crsi_prev2": round(float(prev2), 4),
             "params": "%d/%d/%d" % (RSI_LEN, UPDOWN_LEN, ROC_LEN),
+            "source": source,
         })
 
     if not rows:
