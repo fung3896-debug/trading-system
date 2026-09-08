@@ -1,0 +1,39 @@
+name: Weekly CRSI Observation Log
+
+on:
+  schedule:
+    # 周六 01:00 UTC = 马来西亚周六 09:00，此时周五收盘数据已就绪
+    - cron: '0 1 * * 6'
+  workflow_dispatch:
+
+jobs:
+  crsi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - run: pip install -r requirements.txt
+
+      - name: Install curl_cffi
+        run: pip install "curl_cffi>=0.15"
+
+      - name: Run CRSI scan (all Bursa)
+        run: python crsi_observation_log.py --all
+
+      - name: Commit log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crsi_observation_log.csv
+          if git diff --staged --quiet; then
+            echo "无新增记录，跳过 commit"
+          else
+            git commit -m "CRSI周线观察记录 $(date -u +%Y-%m-%d)"
+            git pull --rebase
+            git push
+          fi
